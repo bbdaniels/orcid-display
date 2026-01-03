@@ -43,7 +43,33 @@ class OrcidProfile extends HTMLElement {
 
       const worksData = worksResponse.ok ? await worksResponse.json() : { group: [] };
 
-      this.shadowRoot.innerHTML = this.getStyles() + this.buildHTML(profile, worksData, orcid);
+      // Fetch full details for each work to get contributors
+      const workGroups = worksData.group || [];
+      const worksWithContributors = await Promise.all(
+        workGroups.map(async (group) => {
+          const workSummary = group['work-summary']?.[0];
+          if (!workSummary) return { summary: null, contributors: [] };
+
+          const putCode = workSummary['put-code'];
+          try {
+            const workRes = await fetch(`https://pub.orcid.org/v3.0/${orcid}/work/${putCode}`, {
+              headers: { 'Accept': 'application/json' }
+            });
+            if (workRes.ok) {
+              const workData = await workRes.json();
+              return {
+                summary: workSummary,
+                contributors: workData.contributors?.contributor || []
+              };
+            }
+          } catch (e) {
+            // Fall back to no contributors
+          }
+          return { summary: workSummary, contributors: [] };
+        })
+      );
+
+      this.shadowRoot.innerHTML = this.getStyles() + this.buildHTML(profile, worksWithContributors, orcid);
       this.setupSearch();
     } catch (err) {
       console.error('ORCID fetch error:', err);
@@ -51,12 +77,17 @@ class OrcidProfile extends HTMLElement {
     }
   }
 
-  buildHTML(profile, worksData, orcid) {
+  buildHTML(profile, works, orcid) {
     const person = profile.person || {};
     const name = person.name || {};
     const displayName = name['credit-name']?.value ||
                         `${name['given-names']?.value || ''} ${name['family-name']?.value || ''}`.trim() ||
                         'Unknown';
+
+    // Store the profile owner's name parts for highlighting
+    const nameParts = displayName.split(' ').filter(Boolean);
+    this.ownerFirstName = nameParts[0] || '';
+    this.ownerLastName = nameParts[nameParts.length - 1] || '';
 
     const biography = person.biography?.content || '';
     const emails = person.emails?.email || [];
@@ -70,7 +101,6 @@ class OrcidProfile extends HTMLElement {
     const currentEmployment = this.getCurrentAffiliation(employments);
 
     // Process works
-    const works = worksData.group || [];
     const workCount = works.length;
 
     return `
@@ -127,7 +157,7 @@ class OrcidProfile extends HTMLElement {
             <span class="work-count">${workCount} works</span>
           </div>
           <div class="works">
-            ${works.length ? works.map(group => this.buildWorkCard(group)).join('') : '<p class="no-works">No publications found</p>'}
+            ${works.length ? works.map(work => this.buildWorkCard(work)).join('') : '<p class="no-works">No publications found</p>'}
           </div>
         </div>
       </div>
@@ -169,17 +199,17 @@ class OrcidProfile extends HTMLElement {
     return null;
   }
 
-  buildWorkCard(group) {
-    const workSummary = group['work-summary']?.[0];
+  buildWorkCard(work) {
+    const workSummary = work.summary;
     if (!workSummary) return '';
+
+    const contributors = work.contributors || [];
 
     const title = workSummary.title?.title?.value || 'Untitled';
     const subtitle = workSummary.title?.subtitle?.value || '';
     const journalTitle = workSummary['journal-title']?.value || '';
     const pubYear = workSummary['publication-date']?.year?.value || '';
     const pubMonth = workSummary['publication-date']?.month?.value || '';
-    const workType = this.formatWorkType(workSummary.type);
-
     // Get external IDs (DOI, etc.)
     const externalIds = workSummary['external-ids']?.['external-id'] || [];
     const doi = externalIds.find(id => id['external-id-type'] === 'doi');
@@ -187,17 +217,20 @@ class OrcidProfile extends HTMLElement {
 
     const pubDate = pubMonth ? `${this.getMonthName(pubMonth)} ${pubYear}` : pubYear;
 
+    // Build author list with profile owner highlighted
+    const authorList = this.buildAuthorList(contributors);
+
     return `
       <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}">
         <div class="work-header">
-          <span class="work-type">${workType}</span>
+          ${journalTitle ? `<span class="work-journal-tag">${journalTitle}</span>` : ''}
           ${pubDate ? `<span class="work-date">${pubDate}</span>` : ''}
         </div>
         <h3 class="work-title">
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener">${title}</a>` : title}
         </h3>
+        ${authorList ? `<p class="work-authors">${authorList}</p>` : ''}
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
-        ${journalTitle ? `<p class="work-journal">${journalTitle}</p>` : ''}
         <div class="work-meta">
           ${doi ? `
             <a href="${doiUrl}" target="_blank" rel="noopener" class="doi-link">
@@ -210,21 +243,108 @@ class OrcidProfile extends HTMLElement {
     `;
   }
 
-  formatWorkType(type) {
-    if (!type) return 'Publication';
-    const types = {
-      'journal-article': 'Journal Article',
-      'book': 'Book',
-      'book-chapter': 'Book Chapter',
-      'conference-paper': 'Conference Paper',
-      'dissertation': 'Dissertation',
-      'report': 'Report',
-      'dataset': 'Dataset',
-      'preprint': 'Preprint',
-      'working-paper': 'Working Paper',
-      'other': 'Other'
-    };
-    return types[type] || type.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  buildAuthorList(contributors) {
+    if (!contributors || contributors.length === 0) return '';
+
+    const authors = contributors
+      .filter(c => {
+        // Include if role is 'author' OR if contributor-attributes is null (common case)
+        const role = c['contributor-attributes']?.['contributor-role'];
+        return role === 'author' || role === undefined || role === null;
+      })
+      .map(c => {
+        const name = c['credit-name']?.value || '';
+        if (!name) return null;
+
+        // Normalize to "F LastName" format
+        const normalized = this.normalizeName(name);
+        if (!normalized) return null;
+
+        // Check if this is the profile owner
+        const isOwner = this.isOwnerName(normalized);
+        return isOwner ? `<strong class="author-highlight">${normalized}</strong>` : normalized;
+      })
+      .filter(Boolean);
+
+    if (authors.length === 0) return '';
+    return authors.join(', ');
+  }
+
+  normalizeName(name) {
+    // Normalize to "F LastName" format (first initial + rest of name)
+    // Handle: "First Last", "First Middle Last", "Last, First", "Last, First Middle", "LastName AB"
+
+    if (!name || !name.trim()) return null;
+
+    let cleaned = name.replace(/\s+/g, ' ').trim();
+    let firstName, restOfName;
+
+    if (cleaned.includes(',')) {
+      // "Last, First" or "Last, First Middle" format
+      const [last, first] = cleaned.split(',').map(p => p.trim());
+      firstName = first || '';
+      restOfName = last || '';
+    } else {
+      const parts = cleaned.split(' ');
+      if (parts.length === 1) {
+        return this.capitalizeName(parts[0]);
+      }
+
+      // Check if last part is all caps initials (PubMed style: "Smith AB")
+      const lastPart = parts[parts.length - 1];
+      if (/^[A-Z]{1,3}$/.test(lastPart)) {
+        // PubMed style: "LastName AB" -> use first char of initials, rest is last name
+        firstName = lastPart;
+        restOfName = parts.slice(0, -1).join(' ');
+      } else {
+        // Standard "First Last" or "First Middle Last"
+        firstName = parts[0];
+        restOfName = parts.slice(1).join(' ');
+      }
+    }
+
+    // Get first initial
+    const cleanFirst = firstName.replace(/[.,]/g, '').trim();
+    const initial = cleanFirst ? cleanFirst[0].toUpperCase() : '';
+
+    // Capitalize rest of name
+    const capitalizedRest = this.capitalizeName(restOfName);
+
+    return initial ? `${initial} ${capitalizedRest}` : capitalizedRest;
+  }
+
+  capitalizeName(name) {
+    if (!name) return '';
+    // Capitalize each word, handle hyphenated names
+    // Preserve internal caps for names like "McDowell", "McDonald", etc.
+    return name.split(' ').map(word =>
+      word.split('-').map(part => {
+        if (!part) return '';
+        // Check if name has internal caps (like McDonald, McPake)
+        const hasInternalCaps = part.slice(1).match(/[A-Z]/);
+        if (hasInternalCaps) {
+          // Preserve original capitalization, just ensure first letter is caps
+          return part.charAt(0).toUpperCase() + part.slice(1);
+        }
+        // Standard capitalization
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      }).join('-')
+    ).join(' ');
+  }
+
+  isOwnerName(normalizedName) {
+    // Check if normalized name matches the profile owner
+    if (!normalizedName || !this.ownerFirstName || !this.ownerLastName) return false;
+
+    const parts = normalizedName.toLowerCase().split(' ').filter(Boolean);
+    const ownerInitial = this.ownerFirstName[0].toLowerCase();
+    const ownerLast = this.ownerLastName.toLowerCase();
+
+    // Check: first part is initial, last name is present
+    const hasInitial = parts[0] === ownerInitial;
+    const hasLastName = parts.some(p => p === ownerLast);
+
+    return hasInitial && hasLastName;
   }
 
   getMonthName(month) {
@@ -430,15 +550,14 @@ class OrcidProfile extends HTMLElement {
           margin-bottom: 8px;
         }
 
-        .work-type {
-          font-size: 11px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          padding: 3px 8px;
-          background: #ddf4ff;
-          color: #0969da;
-          border-radius: 4px;
+        .work-journal-tag {
+          font-size: 12px;
+          font-style: italic;
+          color: #57606a;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 70%;
         }
 
         .work-date {
@@ -460,17 +579,23 @@ class OrcidProfile extends HTMLElement {
           text-decoration: underline;
         }
 
+        .work-authors {
+          margin: 0 0 8px 0;
+          font-size: 14px;
+          color: #57606a;
+          line-height: 1.4;
+        }
+
+        .author-highlight {
+          color: #24292f;
+          font-weight: 600;
+        }
+
         .work-subtitle {
           margin: 0 0 8px 0;
           font-size: 14px;
           color: #57606a;
           font-style: italic;
-        }
-
-        .work-journal {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          color: #57606a;
         }
 
         .work-meta {

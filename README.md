@@ -9,7 +9,8 @@ Display ORCID profiles and publications as beautiful, embeddable cards on any we
 - **Single file** - No dependencies, just one JavaScript file
 - **Works anywhere** - Squarespace, WordPress, static sites, any platform
 - **Researcher profile** - Name, affiliation, biography, and ORCID ID
-- **Publications list** - All works from ORCID with DOI links
+- **Publications list** - All works from ORCID with DOI links and coauthor lists
+- **Author highlighting** - Profile owner's name highlighted in author lists
 - **Search** - Filter publications by title or journal
 - **Keywords & links** - Display research keywords and external URLs
 - **Responsive** - Looks great on desktop and mobile
@@ -21,10 +22,10 @@ Add these two lines to your HTML:
 
 ```html
 <script src="https://bbdaniels.github.io/orcid-display/orcid-display.js"></script>
-<orcid-profile orcid="0000-0002-3196-9854"></orcid-profile>
+<orcid-profile orcid="0000-0001-9652-6653"></orcid-profile>
 ```
 
-Replace `0000-0002-3196-9854` with any ORCID ID.
+Replace `0000-0001-9652-6653` with any ORCID ID.
 
 ## Demo
 
@@ -38,7 +39,7 @@ See it in action: [bbdaniels.github.io/orcid-display](https://bbdaniels.github.i
 - **External links** (personal website, institutional page, etc.)
 - **Publications** sorted by date with:
   - Title (linked to DOI when available)
-  - Publication type (Journal Article, Book Chapter, etc.)
+  - Coauthor list (profile owner's name highlighted)
   - Journal name
   - Publication date
   - DOI link
