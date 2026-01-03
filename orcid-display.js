@@ -7,6 +7,7 @@ class OrcidProfile extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this.activeYearFilter = null;
   }
 
   connectedCallback() {
@@ -43,37 +44,70 @@ class OrcidProfile extends HTMLElement {
 
       const worksData = worksResponse.ok ? await worksResponse.json() : { group: [] };
 
-      // Fetch full details for each work to get contributors
+      // Build works list from summaries (no contributors yet - lazy load)
       const workGroups = worksData.group || [];
-      const worksWithContributors = await Promise.all(
-        workGroups.map(async (group) => {
-          const workSummary = group['work-summary']?.[0];
-          if (!workSummary) return { summary: null, contributors: [] };
+      const works = workGroups.map(group => {
+        const workSummary = group['work-summary']?.[0];
+        return {
+          summary: workSummary,
+          contributors: null, // null means not loaded yet
+          putCode: workSummary?.['put-code']
+        };
+      }).filter(w => w.summary);
 
-          const putCode = workSummary['put-code'];
-          try {
-            const workRes = await fetch(`https://pub.orcid.org/v3.0/${orcid}/work/${putCode}`, {
-              headers: { 'Accept': 'application/json' }
-            });
-            if (workRes.ok) {
-              const workData = await workRes.json();
-              return {
-                summary: workSummary,
-                contributors: workData.contributors?.contributor || []
-              };
-            }
-          } catch (e) {
-            // Fall back to no contributors
-          }
-          return { summary: workSummary, contributors: [] };
-        })
-      );
+      // Store for lazy loading
+      this.orcid = orcid;
+      this.works = works;
 
-      this.shadowRoot.innerHTML = this.getStyles() + this.buildHTML(profile, worksWithContributors, orcid);
+      // Render immediately with summaries only
+      this.shadowRoot.innerHTML = this.getStyles() + this.buildHTML(profile, works, orcid);
       this.setupSearch();
+      this.setupActivityChart();
+
+      // Lazy load contributors in background
+      this.lazyLoadContributors(orcid, works);
+
     } catch (err) {
       console.error('ORCID fetch error:', err);
       this.shadowRoot.innerHTML = this.getStyles() + `<p class="error">Failed to load ORCID data. Please check the ORCID ID.</p>`;
+    }
+  }
+
+  async lazyLoadContributors(orcid, works) {
+    // Load contributors for each work in background
+    for (const work of works) {
+      if (!work.putCode) continue;
+
+      try {
+        const workRes = await fetch(`https://pub.orcid.org/v3.0/${orcid}/work/${work.putCode}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (workRes.ok) {
+          const workData = await workRes.json();
+          work.contributors = workData.contributors?.contributor || [];
+
+          // Update the work card in place
+          const card = this.shadowRoot.querySelector(`[data-put-code="${work.putCode}"]`);
+          if (card) {
+            const authorList = this.buildAuthorList(work.contributors);
+            const authorsEl = card.querySelector('.work-authors');
+            if (authorsEl) {
+              authorsEl.innerHTML = authorList;
+            } else if (authorList) {
+              // Insert authors after title
+              const titleEl = card.querySelector('.work-title');
+              if (titleEl) {
+                const p = document.createElement('p');
+                p.className = 'work-authors';
+                p.innerHTML = authorList;
+                titleEl.insertAdjacentElement('afterend', p);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Skip this work
+      }
     }
   }
 
@@ -103,6 +137,9 @@ class OrcidProfile extends HTMLElement {
     // Process works
     const workCount = works.length;
 
+    // Build activity chart data
+    const yearCounts = this.getYearCounts(works);
+
     return `
       <div class="container">
         <header class="profile">
@@ -111,7 +148,7 @@ class OrcidProfile extends HTMLElement {
             <div class="orcid-id">
               <svg class="orcid-logo" viewBox="0 0 256 256" width="16" height="16">
                 <path fill="#A6CE39" d="M256 128c0 70.7-57.3 128-128 128S0 198.7 0 128 57.3 0 128 0s128 57.3 128 128z"/>
-                <path fill="#FFF" d="M86.3 186.2H70.9V79.1h15.4v107.1zM78.6 53.5c-5.7 0-10.3 4.6-10.3 10.3s4.6 10.3 10.3 10.3 10.3-4.6 10.3-10.3-4.6-10.3-10.3-10.3zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.2 178 93 googletag.pubads().refresh([140.5 93h-26.2v79.4z"/>
+                <path fill="#FFF" d="M86.3 186.2H70.9V79.1h15.4v107.1zM78.6 53.5c-5.7 0-10.3 4.6-10.3 10.3s4.6 10.3 10.3 10.3 10.3-4.6 10.3-10.3-4.6-10.3-10.3-10.3zM108.9 79.1h41.6c39.6 0 57 28.3 57 53.6 0 27.5-21.5 53.6-56.8 53.6h-41.8V79.1zm15.4 93.3h24.5c34.9 0 42.9-26.5 42.9-39.7C191.7 111.2 178 93 140.5 93h-26.2v79.4z"/>
               </svg>
               <a href="https://orcid.org/${orcid}" target="_blank" rel="noopener">${orcid}</a>
             </div>
@@ -123,6 +160,16 @@ class OrcidProfile extends HTMLElement {
             </div>
           </div>
         </header>
+
+        ${Object.keys(yearCounts).length > 0 ? `
+        <div class="activity-section">
+          <div class="section-title">Publication Activity <span class="section-hint">(click to filter)</span></div>
+          <div class="activity-chart">
+            ${this.buildActivityChart(yearCounts)}
+          </div>
+          <div class="activity-filter-status"></div>
+        </div>
+        ` : ''}
 
         ${keywords.length ? `
         <div class="keywords-section">
@@ -162,6 +209,136 @@ class OrcidProfile extends HTMLElement {
         </div>
       </div>
     `;
+  }
+
+  getYearCounts(works) {
+    const counts = {};
+    for (const work of works) {
+      const year = work.summary?.['publication-date']?.year?.value;
+      if (year) {
+        counts[year] = (counts[year] || 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  buildActivityChart(yearCounts) {
+    const years = Object.keys(yearCounts).sort();
+    if (years.length === 0) return '';
+
+    const maxCount = Math.max(...Object.values(yearCounts));
+    const minYear = parseInt(years[0]);
+    const maxYear = parseInt(years[years.length - 1]);
+
+    // Fill in missing years
+    const allYears = [];
+    for (let y = minYear; y <= maxYear; y++) {
+      allYears.push(y);
+    }
+
+    // Build SVG line chart
+    const width = 100; // percentage
+    const height = 60;
+    const padding = { top: 10, right: 10, bottom: 25, left: 10 };
+    const chartWidth = 100 - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+
+    // Calculate points
+    const points = allYears.map((year, i) => {
+      const count = yearCounts[year] || 0;
+      const x = padding.left + (i / (allYears.length - 1 || 1)) * chartWidth;
+      const y = padding.top + chartHeight - (count / maxCount) * chartHeight;
+      return { x, y, year, count };
+    });
+
+    // Create path
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+    // Create area path (for fill)
+    const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
+
+    // Calculate width based on number of years (min 50px per year for readability)
+    const minWidthPerYear = 50;
+    const chartWidthPx = Math.max(allYears.length * minWidthPerYear, 400);
+
+    return `
+      <div class="chart-scroll-container">
+        <div class="chart-inner" style="min-width: ${chartWidthPx}px;">
+          <svg class="line-chart" viewBox="0 0 100 ${height}" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#A6CE39" stop-opacity="0.3"/>
+                <stop offset="100%" stop-color="#A6CE39" stop-opacity="0.05"/>
+              </linearGradient>
+            </defs>
+            <path class="chart-area" d="${areaPath}" fill="url(#areaGradient)"/>
+            <path class="chart-line" d="${linePath}" fill="none" stroke="#A6CE39" stroke-width="0.5"/>
+            ${points.map(p => `
+              <circle class="chart-point" cx="${p.x}" cy="${p.y}" r="${p.count > 0 ? 1.2 : 0}"
+                data-year="${p.year}" data-count="${p.count}"/>
+            `).join('')}
+          </svg>
+          <div class="chart-labels">
+            ${points.map(p => `
+              <button class="chart-year-btn${p.count === 0 ? ' empty' : ''}" data-year="${p.year}" title="${p.year}: ${p.count} publication${p.count !== 1 ? 's' : ''}">${p.year}</button>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  setupActivityChart() {
+    const yearBtns = this.shadowRoot.querySelectorAll('.chart-year-btn');
+    const works = this.shadowRoot.querySelectorAll('.work');
+    const statusEl = this.shadowRoot.querySelector('.activity-filter-status');
+    const workCountEl = this.shadowRoot.querySelector('.work-count');
+
+    yearBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const year = btn.dataset.year;
+
+        // Toggle filter
+        if (this.activeYearFilter === year) {
+          // Clear filter
+          this.activeYearFilter = null;
+          yearBtns.forEach(b => b.classList.remove('active'));
+          works.forEach(w => w.style.display = '');
+          if (statusEl) statusEl.textContent = '';
+          if (workCountEl) workCountEl.textContent = `${works.length} works`;
+        } else {
+          // Apply filter
+          this.activeYearFilter = year;
+          yearBtns.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+
+          let visibleCount = 0;
+          works.forEach(w => {
+            const workYear = w.dataset.year;
+            if (workYear === year) {
+              w.style.display = '';
+              visibleCount++;
+            } else {
+              w.style.display = 'none';
+            }
+          });
+
+          if (statusEl) statusEl.innerHTML = `Showing ${visibleCount} publication${visibleCount !== 1 ? 's' : ''} from ${year} <button class="clear-filter">Clear</button>`;
+          if (workCountEl) workCountEl.textContent = `${visibleCount} of ${works.length} works`;
+
+          // Setup clear button
+          const clearBtn = statusEl?.querySelector('.clear-filter');
+          clearBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.activeYearFilter = null;
+            yearBtns.forEach(b => b.classList.remove('active'));
+            works.forEach(w => w.style.display = '');
+            if (statusEl) statusEl.textContent = '';
+            if (workCountEl) workCountEl.textContent = `${works.length} works`;
+          });
+        }
+      });
+    });
   }
 
   getCurrentAffiliation(employments) {
@@ -204,6 +381,7 @@ class OrcidProfile extends HTMLElement {
     if (!workSummary) return '';
 
     const contributors = work.contributors || [];
+    const putCode = work.putCode || '';
 
     const title = workSummary.title?.title?.value || 'Untitled';
     const subtitle = workSummary.title?.subtitle?.value || '';
@@ -217,11 +395,11 @@ class OrcidProfile extends HTMLElement {
 
     const pubDate = pubMonth ? `${this.getMonthName(pubMonth)} ${pubYear}` : pubYear;
 
-    // Build author list with profile owner highlighted
-    const authorList = this.buildAuthorList(contributors);
+    // Build author list with profile owner highlighted (may be empty if not loaded yet)
+    const authorList = work.contributors !== null ? this.buildAuthorList(contributors) : '';
 
     return `
-      <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}">
+      <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}" data-year="${pubYear}" data-put-code="${putCode}">
         <div class="work-header">
           ${journalTitle ? `<span class="work-journal-tag">${journalTitle}</span>` : ''}
           ${pubDate ? `<span class="work-date">${pubDate}</span>` : ''}
@@ -229,7 +407,7 @@ class OrcidProfile extends HTMLElement {
         <h3 class="work-title">
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener">${title}</a>` : title}
         </h3>
-        ${authorList ? `<p class="work-authors">${authorList}</p>` : ''}
+        <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
         <div class="work-meta">
           ${doi ? `
@@ -359,12 +537,28 @@ class OrcidProfile extends HTMLElement {
 
     search?.addEventListener('input', (e) => {
       const query = e.target.value.toLowerCase();
+
+      // Clear year filter when searching
+      if (query && this.activeYearFilter) {
+        this.activeYearFilter = null;
+        this.shadowRoot.querySelectorAll('.chart-year-btn').forEach(b => b.classList.remove('active'));
+        const statusEl = this.shadowRoot.querySelector('.activity-filter-status');
+        if (statusEl) statusEl.textContent = '';
+      }
+
       works.forEach(work => {
         const title = work.dataset.title;
         const journal = work.dataset.journal;
         const match = title.includes(query) || journal.includes(query);
         work.style.display = match ? '' : 'none';
       });
+
+      // Update count
+      const workCountEl = this.shadowRoot.querySelector('.work-count');
+      if (workCountEl) {
+        const visible = Array.from(works).filter(w => w.style.display !== 'none').length;
+        workCountEl.textContent = query ? `${visible} of ${works.length} works` : `${works.length} works`;
+      }
     });
   }
 
@@ -444,6 +638,99 @@ class OrcidProfile extends HTMLElement {
         }
         .stats strong { color: #24292f; }
 
+        /* Activity Chart */
+        .activity-section {
+          margin-bottom: 20px;
+          padding: 16px;
+          background: #f6f8fa;
+          border-radius: 6px;
+        }
+
+        .activity-chart {
+          margin-top: 12px;
+        }
+
+        .chart-scroll-container {
+          overflow-x: auto;
+          margin: 0 -8px;
+          padding: 0 8px;
+        }
+
+        .chart-inner {
+          min-width: 100%;
+        }
+
+        .line-chart {
+          width: 100%;
+          height: 60px;
+        }
+
+        .chart-line {
+          vector-effect: non-scaling-stroke;
+          stroke-width: 2;
+        }
+
+        .chart-point {
+          fill: #A6CE39;
+          transition: r 0.15s;
+        }
+
+        .chart-labels {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 4px;
+          padding: 0 10%;
+        }
+
+        .chart-year-btn {
+          background: none;
+          border: 1px solid transparent;
+          color: #24292f;
+          font-size: 11px;
+          font-weight: 500;
+          padding: 4px 6px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s;
+          flex-shrink: 0;
+        }
+
+        .chart-year-btn.empty {
+          color: #8b949e;
+          font-weight: 400;
+        }
+
+        .chart-year-btn:hover {
+          background: #ddf4ff;
+          color: #0969da;
+        }
+
+        .chart-year-btn.active {
+          background: #0969da;
+          color: #ffffff;
+          border-color: #0969da;
+        }
+
+        .activity-filter-status {
+          margin-top: 12px;
+          font-size: 13px;
+          color: #57606a;
+        }
+
+        .clear-filter {
+          background: none;
+          border: none;
+          color: #0969da;
+          cursor: pointer;
+          font-size: 13px;
+          padding: 0;
+          margin-left: 8px;
+        }
+
+        .clear-filter:hover {
+          text-decoration: underline;
+        }
+
         /* Keywords */
         .keywords-section, .urls-section {
           margin-bottom: 20px;
@@ -456,6 +743,12 @@ class OrcidProfile extends HTMLElement {
           font-weight: 600;
           color: #24292f;
           margin-bottom: 12px;
+        }
+
+        .section-hint {
+          font-weight: 400;
+          font-size: 12px;
+          color: #57606a;
         }
 
         .keywords {
@@ -584,6 +877,11 @@ class OrcidProfile extends HTMLElement {
           font-size: 14px;
           color: #57606a;
           line-height: 1.4;
+          min-height: 1.4em;
+        }
+
+        .work-authors:empty {
+          display: none;
         }
 
         .author-highlight {
@@ -631,6 +929,11 @@ class OrcidProfile extends HTMLElement {
           .orcid-id { justify-content: center; }
           .stats { justify-content: center; }
           .keywords { justify-content: center; }
+
+          .chart-year-btn {
+            font-size: 10px;
+            padding: 2px 4px;
+          }
         }
       </style>
     `;
