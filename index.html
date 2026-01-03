@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORCID Display Demo</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      background: #f6f8fa;
+      margin: 0;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      text-align: center;
+      color: #24292f;
+      margin-bottom: 8px;
+    }
+
+    .tagline {
+      text-align: center;
+      color: #57606a;
+      margin-bottom: 40px;
+    }
+
+    .demo-container {
+      max-width: 960px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+      padding: 24px;
+    }
+
+    .try-it {
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 24px;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+    }
+
+    .try-it h2 {
+      margin-top: 0;
+      color: #24292f;
+    }
+
+    .try-it label {
+      display: block;
+      margin-bottom: 8px;
+      color: #57606a;
+      font-size: 14px;
+    }
+
+    .try-it input {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 16px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+
+    .try-it button {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #ffffff;
+      background: #A6CE39;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .try-it button:hover {
+      background: #8bb82d;
+    }
+
+    .usage {
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 24px;
+      background: #f6f8fa;
+      border-radius: 12px;
+    }
+
+    .usage h2 {
+      margin-top: 0;
+      color: #24292f;
+    }
+
+    .usage pre {
+      background: #24292f;
+      color: #e6edf3;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 14px;
+    }
+
+    .usage code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>ORCID Display</h1>
+  <p class="tagline">Display ORCID profiles and publications as beautiful, embeddable cards</p>
+
+  <div class="demo-container" id="profile-container">
+    <orcid-profile orcid="0000-0002-3196-9854"></orcid-profile>
+  </div>
+
+  <div class="try-it">
+    <h2>Try Another ORCID</h2>
+    <label for="orcid-input">Enter an ORCID ID (e.g., 0000-0002-3196-9854)</label>
+    <input type="text" id="orcid-input" placeholder="0000-0000-0000-0000">
+    <button onclick="loadProfile()">Load Profile</button>
+  </div>
+
+  <div class="usage">
+    <h2>Usage</h2>
+    <p>Add ORCID Display to any webpage with just two lines of code:</p>
+    <pre><code>&lt;script src="https://bbdaniels.github.io/orcid-display/orcid-display.js"&gt;&lt;/script&gt;
+&lt;orcid-profile orcid="0000-0002-3196-9854"&gt;&lt;/orcid-profile&gt;</code></pre>
+    <p>Replace the ORCID ID with your own or any researcher's ORCID.</p>
+  </div>
+
+  <script src="orcid-display.js"></script>
+  <script>
+    function loadProfile() {
+      const orcid = document.getElementById('orcid-input').value.trim();
+      if (orcid) {
+        const container = document.getElementById('profile-container');
+        container.innerHTML = `<orcid-profile orcid="${orcid}"></orcid-profile>`;
+      }
+    }
+
+    // Allow pressing Enter to load
+    document.getElementById('orcid-input').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') loadProfile();
+    });
+  </script>
+</body>
+</html>
