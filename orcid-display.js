@@ -658,6 +658,10 @@ class OrcidProfile extends HTMLElement {
 
         .chart-inner {
           min-width: 100%;
+          background: #ffffff;
+          border: 1px solid #d0d7de;
+          border-radius: 6px;
+          padding: 12px;
         }
 
         .line-chart {
