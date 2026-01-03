@@ -642,7 +642,8 @@ class OrcidProfile extends HTMLElement {
         .activity-section {
           margin-bottom: 20px;
           padding: 16px;
-          background: #f6f8fa;
+          background: #ffffff;
+          border: 1px solid #d0d7de;
           border-radius: 6px;
         }
 
@@ -658,10 +659,6 @@ class OrcidProfile extends HTMLElement {
 
         .chart-inner {
           min-width: 100%;
-          background: #ffffff;
-          border: 1px solid #d0d7de;
-          border-radius: 6px;
-          padding: 12px;
         }
 
         .line-chart {
