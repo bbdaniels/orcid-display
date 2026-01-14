@@ -63,6 +63,7 @@ class OrcidProfile extends HTMLElement {
       this.shadowRoot.innerHTML = this.getStyles() + this.buildHTML(profile, works, orcid);
       this.setupSearch();
       this.setupActivityChart();
+      this.setupFirstAuthorFilter();
 
       // Lazy load contributors in background
       this.lazyLoadContributors(orcid, works);
@@ -103,6 +104,8 @@ class OrcidProfile extends HTMLElement {
                 titleEl.insertAdjacentElement('afterend', p);
               }
             }
+            // Update first-author data attribute
+            card.dataset.firstAuthor = this.isFirstAuthor(work.contributors);
           }
         }
       } catch (e) {
@@ -201,6 +204,7 @@ class OrcidProfile extends HTMLElement {
         <div class="works-section">
           <div class="section-header">
             <span class="section-title">Publications</span>
+            <button class="first-author-filter">First author only</button>
             <span class="work-count">${workCount} works</span>
           </div>
           <div class="works">
@@ -341,6 +345,34 @@ class OrcidProfile extends HTMLElement {
     });
   }
 
+  setupFirstAuthorFilter() {
+    const filterBtn = this.shadowRoot.querySelector('.first-author-filter');
+    const works = this.shadowRoot.querySelectorAll('.work');
+    const workCountEl = this.shadowRoot.querySelector('.work-count');
+
+    if (!filterBtn) return;
+
+    filterBtn.addEventListener('click', () => {
+      const isActive = filterBtn.classList.toggle('active');
+
+      if (isActive) {
+        let visibleCount = 0;
+        works.forEach(w => {
+          if (w.dataset.firstAuthor === 'true') {
+            w.style.display = '';
+            visibleCount++;
+          } else {
+            w.style.display = 'none';
+          }
+        });
+        if (workCountEl) workCountEl.textContent = `${visibleCount} of ${works.length} works`;
+      } else {
+        works.forEach(w => w.style.display = '');
+        if (workCountEl) workCountEl.textContent = `${works.length} works`;
+      }
+    });
+  }
+
   getCurrentAffiliation(employments) {
     if (!employments.length) return null;
 
@@ -397,9 +429,10 @@ class OrcidProfile extends HTMLElement {
 
     // Build author list with profile owner highlighted (may be empty if not loaded yet)
     const authorList = work.contributors !== null ? this.buildAuthorList(contributors) : '';
+    const isFirstAuthor = work.contributors !== null ? this.isFirstAuthor(contributors) : false;
 
     return `
-      <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}" data-year="${pubYear}" data-put-code="${putCode}">
+      <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}" data-year="${pubYear}" data-put-code="${putCode}" data-first-author="${isFirstAuthor}">
         <div class="work-header">
           ${journalTitle ? `<span class="work-journal-tag">${journalTitle}</span>` : ''}
           ${pubDate ? `<span class="work-date">${pubDate}</span>` : ''}
@@ -523,6 +556,25 @@ class OrcidProfile extends HTMLElement {
     const hasLastName = parts.some(p => p === ownerLast);
 
     return hasInitial && hasLastName;
+  }
+
+  isFirstAuthor(contributors) {
+    // Check if profile owner is the first author
+    if (!contributors || contributors.length === 0) return false;
+
+    // Get first contributor with author role
+    const firstAuthor = contributors.find(c => {
+      const role = c['contributor-attributes']?.['contributor-role'];
+      return role === 'author' || role === undefined || role === null;
+    });
+
+    if (!firstAuthor) return false;
+
+    const name = firstAuthor['credit-name']?.value || '';
+    if (!name) return false;
+
+    const normalized = this.normalizeName(name);
+    return this.isOwnerName(normalized);
   }
 
   getMonthName(month) {
@@ -812,6 +864,29 @@ class OrcidProfile extends HTMLElement {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 16px;
+          gap: 12px;
+        }
+
+        .first-author-filter {
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          padding: 4px 10px;
+          border-radius: 20px;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+
+        .first-author-filter:hover {
+          background: #f6f8fa;
+          color: #24292f;
+        }
+
+        .first-author-filter.active {
+          background: #0969da;
+          border-color: #0969da;
+          color: #ffffff;
         }
 
         .work-count {
