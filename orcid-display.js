@@ -112,6 +112,144 @@ class OrcidProfile extends HTMLElement {
         // Skip this work
       }
     }
+
+    // After contributors are loaded, fetch abstracts in background
+    this.lazyLoadAbstracts(works);
+  }
+
+  async lazyLoadAbstracts(works) {
+    // Load abstracts from OpenAlex (primary) and Semantic Scholar (fallback for TLDR)
+    for (const work of works) {
+      const doi = this.getWorkDOI(work);
+      if (!doi) continue;
+
+      try {
+        const abstractData = await this.fetchAbstract(doi);
+        if (abstractData.abstract || abstractData.tldr) {
+          work.abstract = abstractData.abstract;
+          work.tldr = abstractData.tldr;
+
+          // Update the work card with abstract button
+          const card = this.shadowRoot.querySelector(`[data-put-code="${work.putCode}"]`);
+          if (card) {
+            this.addAbstractToCard(card, abstractData);
+          }
+        }
+      } catch (e) {
+        // Skip this work
+      }
+    }
+  }
+
+  getWorkDOI(work) {
+    const externalIds = work.summary?.['external-ids']?.['external-id'] || [];
+    const doi = externalIds.find(id => id['external-id-type'] === 'doi');
+    return doi ? doi['external-id-value'] : null;
+  }
+
+  async fetchAbstract(doi) {
+    let abstract = null;
+    let tldr = null;
+    let openAlexUrl = null;
+    let semanticScholarUrl = null;
+
+    // Try OpenAlex first (better coverage for full abstracts)
+    try {
+      const openAlexRes = await fetch(`https://api.openalex.org/works/https://doi.org/${doi}`);
+      if (openAlexRes.ok) {
+        const data = await openAlexRes.json();
+        if (data.abstract_inverted_index) {
+          abstract = this.reconstructAbstract(data.abstract_inverted_index);
+          openAlexUrl = data.id || null;
+        }
+      }
+    } catch (e) {
+      // OpenAlex failed, continue to Semantic Scholar
+    }
+
+    // Try Semantic Scholar for TLDR (and abstract if OpenAlex failed)
+    try {
+      const ssRes = await fetch(`https://api.semanticscholar.org/graph/v1/paper/DOI:${doi}?fields=abstract,tldr,url`);
+      if (ssRes.ok) {
+        const data = await ssRes.json();
+        if (data.tldr?.text) {
+          tldr = data.tldr.text;
+          semanticScholarUrl = data.url || (data.paperId ? `https://www.semanticscholar.org/paper/${data.paperId}` : null);
+        }
+        if (!abstract && data.abstract) {
+          abstract = data.abstract;
+        }
+      }
+    } catch (e) {
+      // Semantic Scholar failed
+    }
+
+    return { abstract, tldr, openAlexUrl, semanticScholarUrl };
+  }
+
+  reconstructAbstract(invertedIndex) {
+    // OpenAlex stores abstracts as inverted index: { "word": [position1, position2], ... }
+    if (!invertedIndex || typeof invertedIndex !== 'object') return null;
+
+    const words = [];
+    for (const [word, positions] of Object.entries(invertedIndex)) {
+      for (const pos of positions) {
+        words[pos] = word;
+      }
+    }
+    return words.join(' ');
+  }
+
+  addAbstractToCard(card, abstractData) {
+    const { abstract, tldr, openAlexUrl, semanticScholarUrl } = abstractData;
+
+    // Find or create work-meta container
+    let metaEl = card.querySelector('.work-meta');
+    if (!metaEl) {
+      metaEl = document.createElement('div');
+      metaEl.className = 'work-meta';
+      card.appendChild(metaEl);
+    }
+
+    // Add abstract toggle button
+    const abstractBtn = document.createElement('button');
+    abstractBtn.className = 'abstract-toggle';
+    abstractBtn.innerHTML = `
+      <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"/></svg>
+      Abstract
+    `;
+
+    // Create abstract content container
+    const abstractContent = document.createElement('div');
+    abstractContent.className = 'abstract-content';
+    abstractContent.style.display = 'none';
+
+    let contentHTML = '';
+    if (tldr) {
+      contentHTML += `<div class="abstract-tldr"><strong>TL;DR:</strong> ${tldr}`;
+      if (semanticScholarUrl) {
+        contentHTML += ` <a href="${semanticScholarUrl}" target="_blank" rel="noopener" class="abstract-source">Semantic Scholar</a>`;
+      }
+      contentHTML += `</div>`;
+    }
+    if (abstract) {
+      contentHTML += `<div class="abstract-full">${abstract}`;
+      if (openAlexUrl) {
+        contentHTML += ` <a href="${openAlexUrl}" target="_blank" rel="noopener" class="abstract-source">OpenAlex</a>`;
+      }
+      contentHTML += `</div>`;
+    }
+    abstractContent.innerHTML = contentHTML;
+
+    // Toggle behavior
+    abstractBtn.addEventListener('click', () => {
+      const isVisible = abstractContent.style.display !== 'none';
+      abstractContent.style.display = isVisible ? 'none' : 'block';
+      abstractBtn.classList.toggle('active', !isVisible);
+    });
+
+    metaEl.insertBefore(abstractBtn, metaEl.firstChild);
+    card.appendChild(abstractContent);
   }
 
   buildHTML(profile, works, orcid) {
@@ -988,6 +1126,78 @@ class OrcidProfile extends HTMLElement {
         }
         .doi-link:hover {
           color: #0969da;
+          text-decoration: none;
+        }
+
+        /* Abstract Toggle */
+        .abstract-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.15s;
+          font-family: inherit;
+        }
+
+        .abstract-toggle:hover {
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #8b949e;
+        }
+
+        .abstract-toggle.active {
+          background: #ddf4ff;
+          border-color: #54aeff;
+          color: #0969da;
+        }
+
+        .abstract-content {
+          margin-top: 12px;
+          padding: 12px;
+          background: #f6f8fa;
+          border-radius: 6px;
+          font-size: 14px;
+          line-height: 1.6;
+          color: #24292f;
+        }
+
+        .abstract-tldr {
+          margin-bottom: 10px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid #d0d7de;
+          color: #0969da;
+        }
+
+        .abstract-tldr strong {
+          color: #57606a;
+          font-weight: 600;
+        }
+
+        .abstract-full {
+          color: #24292f;
+        }
+
+        .abstract-source {
+          display: inline-block;
+          margin-left: 6px;
+          font-size: 11px;
+          color: #57606a;
+          text-decoration: none;
+          border: 1px solid #d0d7de;
+          padding: 1px 6px;
+          border-radius: 3px;
+          vertical-align: middle;
+        }
+
+        .abstract-source:hover {
+          color: #0969da;
+          border-color: #0969da;
           text-decoration: none;
         }
 

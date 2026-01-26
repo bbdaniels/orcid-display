@@ -11,6 +11,7 @@ Display ORCID profiles and publications as beautiful, embeddable cards on any we
 - **Researcher profile** - Name, affiliation, biography, and ORCID ID
 - **Publications list** - All works from ORCID with DOI links and coauthor lists
 - **Author highlighting** - Profile owner's name highlighted in author lists
+- **Abstracts** - Expandable abstracts from OpenAlex with AI-generated TL;DRs from Semantic Scholar
 - **Search** - Filter publications by title or journal
 - **Keywords & links** - Display research keywords and external URLs
 - **Responsive** - Looks great on desktop and mobile
@@ -43,6 +44,8 @@ See it in action: [bbdaniels.github.io/orcid-display](https://bbdaniels.github.i
   - Journal name
   - Publication date
   - DOI link
+  - Expandable abstract (via [OpenAlex](https://openalex.org))
+  - AI-generated TL;DR summary (via [Semantic Scholar](https://www.semanticscholar.org))
 
 ## Platform-Specific Instructions
 
@@ -69,9 +72,10 @@ Simply include both lines in your HTML file.
 
 ## API
 
-The component uses the public ORCID API (v3.0) which requires no authentication:
-- `https://pub.orcid.org/v3.0/{orcid}` - Profile data
-- `https://pub.orcid.org/v3.0/{orcid}/works` - Publications
+The component uses public APIs which require no authentication:
+- **ORCID** (v3.0) - Profile and publication metadata
+- **OpenAlex** - Abstracts for ~70% of publications
+- **Semantic Scholar** - AI-generated TL;DR summaries
 
 ## Browser Support
 
