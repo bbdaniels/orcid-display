@@ -22,7 +22,7 @@ Display ORCID profiles and publications as beautiful, embeddable cards on any we
 Add these two lines to your HTML:
 
 ```html
-<script src="https://bbdaniels.github.io/orcid-display/orcid-display.js"></script>
+<script src="https://www.benjaminbdaniels.com/orcid-display/orcid-display.js"></script>
 <orcid-profile orcid="0000-0001-9652-6653"></orcid-profile>
 ```
 
@@ -30,7 +30,7 @@ Replace `0000-0001-9652-6653` with any ORCID ID.
 
 ## Demo
 
-See it in action: [bbdaniels.github.io/orcid-display](https://bbdaniels.github.io/orcid-display)
+See it in action: [bbdaniels.github.io/orcid-display](https://www.benjaminbdaniels.com/orcid-display)
 
 ## What Gets Displayed
 
@@ -54,7 +54,7 @@ See it in action: [bbdaniels.github.io/orcid-display](https://bbdaniels.github.i
 1. Go to **Settings > Advanced > Code Injection**
 2. Add the script tag to **Header**:
    ```html
-   <script src="https://bbdaniels.github.io/orcid-display/orcid-display.js"></script>
+   <script src="https://www.benjaminbdaniels.com/orcid-display/orcid-display.js"></script>
    ```
 3. Add a **Code Block** where you want the profile:
    ```html
