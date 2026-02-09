@@ -1226,54 +1226,54 @@ class OrcidProfile extends HTMLElement {
         @media (prefers-color-scheme: dark) {
           :host { color: #e5e5e5; }
           a { color: #60a5fa; }
-          .loading { color: #a3a3a3; }
+          .loading { color: #a3b1c2; }
           .error { color: #f85149; }
-          .profile { border-bottom-color: #333; }
+          .profile { border-bottom-color: #2f3d4f; }
           .name { color: #e5e5e5; }
           .name:hover { color: #60a5fa; }
-          .affiliation { color: #a3a3a3; }
+          .affiliation { color: #a3b1c2; }
           .bio { color: #e5e5e5; }
-          .stats { color: #a3a3a3; }
+          .stats { color: #a3b1c2; }
           .stats strong { color: #e5e5e5; }
-          .activity-section { background: #242424; border-color: #333; }
+          .activity-section { background: #212c3b; border-color: #2f3d4f; }
           .section-title { color: #e5e5e5; }
-          .section-hint { color: #a3a3a3; }
+          .section-hint { color: #a3b1c2; }
           .chart-year-btn { color: #e5e5e5; }
           .chart-year-btn.empty { color: #8b949e; }
-          .chart-year-btn:hover { background: #1a3a4a; color: #60a5fa; }
-          .chart-year-btn.active { background: #60a5fa; color: #1a1a1a; border-color: #60a5fa; }
-          .activity-filter-status { color: #a3a3a3; }
+          .chart-year-btn:hover { background: #1e3a50; color: #60a5fa; }
+          .chart-year-btn.active { background: #60a5fa; color: #1a2332; border-color: #60a5fa; }
+          .activity-filter-status { color: #a3b1c2; }
           .clear-filter { color: #60a5fa; }
-          .keywords-section, .urls-section { background: #2d2d2d; }
-          .keyword { background: #1a3a4a; color: #60a5fa; }
+          .keywords-section, .urls-section { background: #2a3545; }
+          .keyword { background: #1e3a50; color: #60a5fa; }
           .url-link { color: #60a5fa; }
-          .search { color: #e5e5e5; background: #2d2d2d; border-color: #333; }
+          .search { color: #e5e5e5; background: #2a3545; border-color: #2f3d4f; }
           .search:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15); }
           .search::placeholder { color: #8b949e; }
-          .first-author-filter { border-color: #333; color: #a3a3a3; }
-          .first-author-filter:hover { background: #2d2d2d; color: #e5e5e5; }
-          .first-author-filter.active { background: #60a5fa; border-color: #60a5fa; color: #1a1a1a; }
-          .work-count { color: #a3a3a3; }
-          .work { background: #242424; border-color: #333; }
+          .first-author-filter { border-color: #2f3d4f; color: #a3b1c2; }
+          .first-author-filter:hover { background: #2a3545; color: #e5e5e5; }
+          .first-author-filter.active { background: #60a5fa; border-color: #60a5fa; color: #1a2332; }
+          .work-count { color: #a3b1c2; }
+          .work { background: #212c3b; border-color: #2f3d4f; }
           .work:hover { border-color: #60a5fa; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-          .work-journal-tag { color: #a3a3a3; }
+          .work-journal-tag { color: #a3b1c2; }
           .work-date { color: #8b949e; }
           .work-title a { color: #60a5fa; }
-          .work-authors { color: #a3a3a3; }
+          .work-authors { color: #a3b1c2; }
           .author-highlight { color: #e5e5e5; }
-          .work-subtitle { color: #a3a3a3; }
-          .doi-link { color: #a3a3a3; }
+          .work-subtitle { color: #a3b1c2; }
+          .doi-link { color: #a3b1c2; }
           .doi-link:hover { color: #60a5fa; }
-          .abstract-toggle { border-color: #333; color: #a3a3a3; }
-          .abstract-toggle:hover { background: #2d2d2d; color: #e5e5e5; border-color: #8b949e; }
-          .abstract-toggle.active { background: #1a3a4a; border-color: #60a5fa; color: #60a5fa; }
-          .abstract-content { background: #2d2d2d; color: #e5e5e5; }
-          .abstract-tldr { border-bottom-color: #333; color: #60a5fa; }
-          .abstract-tldr strong { color: #a3a3a3; }
+          .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
+          .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
+          .abstract-content { background: #2a3545; color: #e5e5e5; }
+          .abstract-tldr { border-bottom-color: #2f3d4f; color: #60a5fa; }
+          .abstract-tldr strong { color: #a3b1c2; }
           .abstract-full { color: #e5e5e5; }
-          .abstract-source { color: #a3a3a3; border-color: #333; }
+          .abstract-source { color: #a3b1c2; border-color: #2f3d4f; }
           .abstract-source:hover { color: #60a5fa; border-color: #60a5fa; }
-          .no-works { color: #a3a3a3; }
+          .no-works { color: #a3b1c2; }
         }
       </style>
     `;
