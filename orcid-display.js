@@ -378,41 +378,26 @@ class OrcidProfile extends HTMLElement {
       allYears.push(y);
     }
 
-    // Build SVG bar chart
-    const height = 60;
-    const padding = { top: 10, right: 10, bottom: 25, left: 10 };
-    const chartWidth = 100 - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
-    const barGap = 0.3;
-    const totalBarWidth = chartWidth / allYears.length;
-    const barWidth = totalBarWidth - barGap;
+    // Build bar chart using CSS flex (avoids SVG aspect-ratio distortion)
+    const chartHeightPx = 100;
 
-    const bars = allYears.map((year, i) => {
+    const bars = allYears.map(year => {
       const count = yearCounts[year] || 0;
-      const barHeight = count > 0 ? (count / maxCount) * chartHeight : 0;
-      const x = padding.left + i * totalBarWidth + barGap / 2;
-      const y = padding.top + chartHeight - barHeight;
-      return { x, y, barHeight, barWidth, year, count };
+      const pct = count > 0 ? (count / maxCount) * 100 : 0;
+      return { year, count, pct };
     });
-
-    // Calculate width based on number of years (min 50px per year for readability)
-    const minWidthPerYear = 50;
-    const chartWidthPx = Math.max(allYears.length * minWidthPerYear, 400);
 
     return `
       <div class="chart-scroll-container">
-        <div class="chart-inner" style="min-width: ${chartWidthPx}px;">
-          <svg class="bar-chart" viewBox="0 0 100 ${height}" preserveAspectRatio="none">
-            ${bars.map(b => `
-              <rect class="chart-bar" x="${b.x}" y="${b.y}" width="${b.barWidth}" height="${b.barHeight}"
-                rx="0.3" data-year="${b.year}" data-count="${b.count}"/>
-            `).join('')}
-          </svg>
-          <div class="chart-labels">
-            ${bars.map(b => `
+        <div class="chart-bars">
+          ${bars.map(b => `
+            <div class="chart-col" data-year="${b.year}" data-count="${b.count}">
+              <div class="chart-bar-wrap" style="height: ${chartHeightPx}px;">
+                <div class="chart-bar" style="height: ${b.pct}%;"></div>
+              </div>
               <button class="chart-year-btn${b.count === 0 ? ' empty' : ''}" data-year="${b.year}" title="${b.year}: ${b.count} publication${b.count !== 1 ? 's' : ''}">${b.year}</button>
-            `).join('')}
-          </div>
+            </div>
+          `).join('')}
         </div>
       </div>
     `;
@@ -835,30 +820,37 @@ class OrcidProfile extends HTMLElement {
           padding: 0 8px;
         }
 
-        .chart-inner {
+        .chart-bars {
+          display: flex;
+          gap: 4px;
           min-width: 100%;
         }
 
-        .bar-chart {
+        .chart-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          min-width: 40px;
+        }
+
+        .chart-bar-wrap {
           width: 100%;
-          height: 60px;
+          display: flex;
+          align-items: flex-end;
         }
 
         .chart-bar {
-          fill: #A6CE39;
+          width: 100%;
+          background: #A6CE39;
           opacity: 0.7;
+          border-radius: 3px 3px 0 0;
           transition: opacity 0.15s;
+          min-height: 0;
         }
 
-        .chart-bar:hover {
+        .chart-col:hover .chart-bar {
           opacity: 1;
-        }
-
-        .chart-labels {
-          display: flex;
-          justify-content: space-between;
-          margin-top: 4px;
-          padding: 0 10%;
         }
 
         .chart-year-btn {
