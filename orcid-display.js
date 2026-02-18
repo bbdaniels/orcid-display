@@ -378,26 +378,22 @@ class OrcidProfile extends HTMLElement {
       allYears.push(y);
     }
 
-    // Build SVG line chart
-    const width = 100; // percentage
+    // Build SVG bar chart
     const height = 60;
     const padding = { top: 10, right: 10, bottom: 25, left: 10 };
     const chartWidth = 100 - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
+    const barGap = 0.3;
+    const totalBarWidth = chartWidth / allYears.length;
+    const barWidth = totalBarWidth - barGap;
 
-    // Calculate points
-    const points = allYears.map((year, i) => {
+    const bars = allYears.map((year, i) => {
       const count = yearCounts[year] || 0;
-      const x = padding.left + (i / (allYears.length - 1 || 1)) * chartWidth;
-      const y = padding.top + chartHeight - (count / maxCount) * chartHeight;
-      return { x, y, year, count };
+      const barHeight = count > 0 ? (count / maxCount) * chartHeight : 0;
+      const x = padding.left + i * totalBarWidth + barGap / 2;
+      const y = padding.top + chartHeight - barHeight;
+      return { x, y, barHeight, barWidth, year, count };
     });
-
-    // Create path
-    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-
-    // Create area path (for fill)
-    const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
 
     // Calculate width based on number of years (min 50px per year for readability)
     const minWidthPerYear = 50;
@@ -406,23 +402,15 @@ class OrcidProfile extends HTMLElement {
     return `
       <div class="chart-scroll-container">
         <div class="chart-inner" style="min-width: ${chartWidthPx}px;">
-          <svg class="line-chart" viewBox="0 0 100 ${height}" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#A6CE39" stop-opacity="0.3"/>
-                <stop offset="100%" stop-color="#A6CE39" stop-opacity="0.05"/>
-              </linearGradient>
-            </defs>
-            <path class="chart-area" d="${areaPath}" fill="url(#areaGradient)"/>
-            <path class="chart-line" d="${linePath}" fill="none" stroke="#A6CE39" stroke-width="0.5"/>
-            ${points.map(p => `
-              <circle class="chart-point" cx="${p.x}" cy="${p.y}" r="${p.count > 0 ? 1.2 : 0}"
-                data-year="${p.year}" data-count="${p.count}"/>
+          <svg class="bar-chart" viewBox="0 0 100 ${height}" preserveAspectRatio="none">
+            ${bars.map(b => `
+              <rect class="chart-bar" x="${b.x}" y="${b.y}" width="${b.barWidth}" height="${b.barHeight}"
+                rx="0.3" data-year="${b.year}" data-count="${b.count}"/>
             `).join('')}
           </svg>
           <div class="chart-labels">
-            ${points.map(p => `
-              <button class="chart-year-btn${p.count === 0 ? ' empty' : ''}" data-year="${p.year}" title="${p.year}: ${p.count} publication${p.count !== 1 ? 's' : ''}">${p.year}</button>
+            ${bars.map(b => `
+              <button class="chart-year-btn${b.count === 0 ? ' empty' : ''}" data-year="${b.year}" title="${b.year}: ${b.count} publication${b.count !== 1 ? 's' : ''}">${b.year}</button>
             `).join('')}
           </div>
         </div>
@@ -851,19 +839,19 @@ class OrcidProfile extends HTMLElement {
           min-width: 100%;
         }
 
-        .line-chart {
+        .bar-chart {
           width: 100%;
           height: 60px;
         }
 
-        .chart-line {
-          vector-effect: non-scaling-stroke;
-          stroke-width: 2;
+        .chart-bar {
+          fill: #A6CE39;
+          opacity: 0.7;
+          transition: opacity 0.15s;
         }
 
-        .chart-point {
-          fill: #A6CE39;
-          transition: r 0.15s;
+        .chart-bar:hover {
+          opacity: 1;
         }
 
         .chart-labels {
