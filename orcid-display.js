@@ -602,13 +602,13 @@ class OrcidProfile extends HTMLElement {
         </div>
         <h3 class="work-title">
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener">${title}</a>` : title}
+          ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener" class="doi-outlink"><svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg></a>` : ''}
         </h3>
         <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
         <div class="work-meta">
           ${doi ? `
             <a href="${doiUrl}" target="_blank" rel="noopener" class="doi-link">
-              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg>
               DOI
             </a>
           ` : ''}
@@ -1149,15 +1149,33 @@ class OrcidProfile extends HTMLElement {
           font-size: 12px;
         }
 
+        .doi-outlink {
+          color: #57606a;
+          margin-left: 4px;
+          vertical-align: middle;
+        }
+        .doi-outlink:hover {
+          color: #0969da;
+        }
+
         .doi-link {
-          display: flex;
+          display: inline-flex;
           align-items: center;
           gap: 4px;
+          background: none;
+          border: 1px solid #d0d7de;
           color: #57606a;
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+          text-decoration: none;
           font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         }
         .doi-link:hover {
-          color: #0969da;
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #afb8c1;
           text-decoration: none;
         }
 
@@ -1314,8 +1332,10 @@ class OrcidProfile extends HTMLElement {
           .work-authors { color: #a3b1c2; }
           .author-highlight { color: #e5e5e5; }
           .work-subtitle { color: #a3b1c2; }
-          .doi-link { color: #a3b1c2; }
-          .doi-link:hover { color: #60a5fa; }
+          .doi-outlink { color: #a3b1c2; }
+          .doi-outlink:hover { color: #60a5fa; }
+          .doi-link { border-color: #2f3d4f; color: #a3b1c2; }
+          .doi-link:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .zenodo-badge { border-color: #2f3d4f; color: #a3b1c2; }
           .zenodo-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
