@@ -189,8 +189,8 @@ class OrcidProfile extends HTMLElement {
         badge.rel = 'noopener';
         badge.className = 'zenodo-badge';
         badge.innerHTML = `
-          <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 3.25a.25.25 0 0 1 .25-.25h5.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-5.5A.25.25 0 0 1 5 3.75Z"/></svg>
-          ${zenodo.access === 'restricted' ? 'Request Data' : 'Data'}`;
+          <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .53.22l2.5 2.5a.75.75 0 0 1 .22.53v10.25A2.5 2.5 0 0 1 13 16H3.5A2.5 2.5 0 0 1 1 13.5zM3.5 1.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1H13a1 1 0 0 0 1-1V4.06L11.44 1.5zM4 4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm1.5.5v1h3v-1zM4 10.5a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0z"/></svg>
+          Package`;
         metaEl.appendChild(badge);
       }
     } catch (err) {
@@ -1165,17 +1165,19 @@ class OrcidProfile extends HTMLElement {
           display: inline-flex;
           align-items: center;
           gap: 4px;
-          color: #fff;
-          background: #0d6efd;
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 11px;
-          font-weight: 500;
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 6px;
+          cursor: pointer;
           text-decoration: none;
-          font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
         }
         .zenodo-badge:hover {
-          background: #0a58ca;
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #afb8c1;
           text-decoration: none;
         }
 
@@ -1314,8 +1316,8 @@ class OrcidProfile extends HTMLElement {
           .work-subtitle { color: #a3b1c2; }
           .doi-link { color: #a3b1c2; }
           .doi-link:hover { color: #60a5fa; }
-          .zenodo-badge { background: #1f6feb; }
-          .zenodo-badge:hover { background: #388bfd; }
+          .zenodo-badge { border-color: #2f3d4f; color: #a3b1c2; }
+          .zenodo-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
           .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
