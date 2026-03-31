@@ -189,7 +189,7 @@ class OrcidProfile extends HTMLElement {
         badge.rel = 'noopener';
         badge.className = 'zenodo-badge';
         badge.innerHTML = `
-          <svg viewBox="0 0 16 16" width="12" height="12"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="0.75"/></svg>
+          <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M1 2.5A2.5 2.5 0 0 1 3.5 0h8.75a.75.75 0 0 1 .53.22l2.5 2.5a.75.75 0 0 1 .22.53v10.25A2.5 2.5 0 0 1 13 16H3.5A2.5 2.5 0 0 1 1 13.5zM3.5 1.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1H13a1 1 0 0 0 1-1V4.06L11.44 1.5zM4 4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zm1.5.5v1h3v-1zM4 10.5a1.5 1.5 0 1 1 3 0 1.5 1.5 0 0 1-3 0z"/></svg>
           Replication`;
         metaEl.appendChild(badge);
       }
