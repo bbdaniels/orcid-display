@@ -68,6 +68,9 @@ class OrcidProfile extends HTMLElement {
       // Lazy load contributors in background
       this.lazyLoadContributors(orcid, works);
 
+      // Lazy load Zenodo replication data badges
+      this.lazyLoadZenodo(orcid);
+
     } catch (err) {
       console.error('ORCID fetch error:', err);
       this.shadowRoot.innerHTML = this.getStyles() + `<p class="error">Failed to load ORCID data. Please check the ORCID ID.</p>`;
@@ -145,6 +148,55 @@ class OrcidProfile extends HTMLElement {
     const externalIds = work.summary?.['external-ids']?.['external-id'] || [];
     const doi = externalIds.find(id => id['external-id-type'] === 'doi');
     return doi ? doi['external-id-value'] : null;
+  }
+
+  async lazyLoadZenodo(orcid) {
+    try {
+      const res = await fetch(`https://zenodo.org/api/records?q=creators.orcid:${orcid}&size=25`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const records = data.hits?.hits || [];
+
+      // Build map: paper DOI (lowercase) -> Zenodo record URL
+      const doiToZenodo = {};
+      for (const record of records) {
+        const ri = record.metadata?.related_identifiers || [];
+        const zenodoUrl = `https://zenodo.org/records/${record.id}`;
+        const access = record.metadata?.access_right || 'open';
+        for (const rel of ri) {
+          if (rel.scheme === 'doi' && rel.relation === 'isSupplementTo') {
+            doiToZenodo[rel.identifier.toLowerCase()] = { url: zenodoUrl, access };
+          }
+        }
+      }
+
+      // Inject badges into matching work cards
+      for (const work of this.works) {
+        const doi = this.getWorkDOI(work);
+        if (!doi) continue;
+        const zenodo = doiToZenodo[doi.toLowerCase()];
+        if (!zenodo) continue;
+
+        const card = this.shadowRoot.querySelector(`[data-put-code="${work.putCode}"]`);
+        if (!card) continue;
+
+        let metaEl = card.querySelector('.work-meta');
+        if (!metaEl) continue;
+
+        const badge = document.createElement('a');
+        badge.href = zenodo.url;
+        badge.target = '_blank';
+        badge.rel = 'noopener';
+        badge.className = 'zenodo-badge';
+        badge.innerHTML = `
+          <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 3.25a.25.25 0 0 1 .25-.25h5.5a.25.25 0 0 1 .25.25v.5a.25.25 0 0 1-.25.25h-5.5A.25.25 0 0 1 5 3.75Z"/></svg>
+          ${zenodo.access === 'restricted' ? 'Request Data' : 'Data'}`;
+        metaEl.appendChild(badge);
+      }
+    } catch (err) {
+      // Silently fail -- Zenodo badges are optional
+      console.warn('Zenodo fetch failed:', err);
+    }
   }
 
   async fetchAbstract(doi) {
@@ -1109,6 +1161,24 @@ class OrcidProfile extends HTMLElement {
           text-decoration: none;
         }
 
+        .zenodo-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          color: #fff;
+          background: #0d6efd;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 500;
+          text-decoration: none;
+          font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        }
+        .zenodo-badge:hover {
+          background: #0a58ca;
+          text-decoration: none;
+        }
+
         /* Abstract Toggle */
         .abstract-toggle {
           display: inline-flex;
@@ -1244,6 +1314,8 @@ class OrcidProfile extends HTMLElement {
           .work-subtitle { color: #a3b1c2; }
           .doi-link { color: #a3b1c2; }
           .doi-link:hover { color: #60a5fa; }
+          .zenodo-badge { background: #1f6feb; }
+          .zenodo-badge:hover { background: #388bfd; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
           .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
