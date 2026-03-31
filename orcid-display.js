@@ -602,7 +602,7 @@ class OrcidProfile extends HTMLElement {
         </div>
         <h3 class="work-title">
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener">${title}</a>` : title}
-          ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener" class="doi-inline">${doi['external-id-value']}</a>` : ''}
+          ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener" class="doi-inline"><svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg> DOI</a>` : ''}
         </h3>
         <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
@@ -1145,16 +1145,18 @@ class OrcidProfile extends HTMLElement {
         }
 
         .doi-inline {
-          font-size: 11px;
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          font-size: 10px;
           font-weight: 400;
           color: #57606a;
           margin-left: 6px;
-          font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
           text-decoration: none;
+          vertical-align: middle;
         }
         .doi-inline:hover {
           color: #0969da;
-          text-decoration: underline;
         }
 
         .zenodo-badge {
