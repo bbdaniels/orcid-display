@@ -47,9 +47,11 @@ class OrcidProfile extends HTMLElement {
       // Build works list from summaries (no contributors yet - lazy load)
       const workGroups = worksData.group || [];
       const works = workGroups.map(group => {
-        const workSummary = group['work-summary']?.[0];
+        const summaries = group['work-summary'] || [];
+        const workSummary = summaries[0];
         return {
           summary: workSummary,
+          allSummaries: summaries, // keep siblings so we can surface working-paper DOIs
           contributors: null, // null means not loaded yet
           putCode: workSummary?.['put-code']
         };
@@ -594,10 +596,31 @@ class OrcidProfile extends HTMLElement {
     } else if (!journalTitle && workType === 'preprint') {
       journalTitle = 'Preprint';
     }
-    // Get external IDs (DOI, etc.)
-    const externalIds = workSummary['external-ids']?.['external-id'] || [];
-    const doi = externalIds.find(id => id['external-id-type'] === 'doi');
-    const doiUrl = doi ? `https://doi.org/${doi['external-id-value']}` : null;
+    // Collect DOIs across all summaries in the group (ORCID auto-groups by shared IDs).
+    // Working-paper DOIs (NBER, SSRN, arXiv, OSF, bioRxiv/medRxiv) get surfaced as an
+    // open-access alternative when the primary entry is a paywalled published version.
+    const allSummaries = work.allSummaries && work.allSummaries.length ? work.allSummaries : [workSummary];
+    const seen = new Set();
+    const allDois = [];
+    for (const s of allSummaries) {
+      const ids = s?.['external-ids']?.['external-id'] || [];
+      for (const id of ids) {
+        if (id['external-id-type'] !== 'doi') continue;
+        const val = id['external-id-value'];
+        if (!val) continue;
+        const key = val.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        allDois.push(val);
+      }
+    }
+    const wpPrefixRe = /^10\.(3386|2139|48550|31219|1101)\//i;
+    const publishedDoi = allDois.find(d => !wpPrefixRe.test(d)) || allDois[0] || null;
+    const workingPaperDoi = allDois.find(d => wpPrefixRe.test(d) && d.toLowerCase() !== (publishedDoi || '').toLowerCase()) || null;
+    const doi = publishedDoi ? { 'external-id-value': publishedDoi } : null;
+    const doiUrl = publishedDoi ? `https://doi.org/${publishedDoi}` : null;
+    const workingPaperUrl = workingPaperDoi ? `https://doi.org/${workingPaperDoi}` : null;
+    const workingPaperLabel = this.workingPaperLabel(workingPaperDoi);
 
     const pubDate = pubMonth ? `${this.getMonthName(pubMonth)} ${pubYear}` : pubYear;
 
@@ -618,6 +641,12 @@ class OrcidProfile extends HTMLElement {
         <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
         <div class="work-meta">
+          ${workingPaperUrl ? `
+            <a href="${workingPaperUrl}" target="_blank" rel="noopener" class="working-paper-badge" title="Open-access working paper version">
+              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 1.75C2 .784 2.784 0 3.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237V14.25A1.75 1.75 0 0 1 12.25 16h-8.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 8 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+              ${workingPaperLabel}
+            </a>
+          ` : ''}
         </div>
       </article>
     `;
@@ -750,6 +779,17 @@ class OrcidProfile extends HTMLElement {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const idx = parseInt(month, 10) - 1;
     return months[idx] || '';
+  }
+
+  workingPaperLabel(doi) {
+    if (!doi) return 'Working paper';
+    const d = doi.toLowerCase();
+    if (d.startsWith('10.3386/')) return 'NBER WP';
+    if (d.startsWith('10.2139/')) return 'SSRN';
+    if (d.startsWith('10.48550/')) return 'arXiv';
+    if (d.startsWith('10.31219/')) return 'OSF';
+    if (d.startsWith('10.1101/')) return 'bioRxiv';
+    return 'Working paper';
   }
 
   setupSearch() {
@@ -1190,6 +1230,26 @@ class OrcidProfile extends HTMLElement {
           text-decoration: none;
         }
 
+        .working-paper-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+          text-decoration: none;
+        }
+        .working-paper-badge:hover {
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #afb8c1;
+          text-decoration: none;
+        }
+
         /* Abstract Toggle */
         .abstract-toggle {
           display: inline-flex;
@@ -1327,6 +1387,8 @@ class OrcidProfile extends HTMLElement {
           .doi-inline:hover { color: #60a5fa; }
           .zenodo-badge { border-color: #2f3d4f; color: #a3b1c2; }
           .zenodo-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .working-paper-badge { border-color: #2f3d4f; color: #a3b1c2; }
+          .working-paper-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
           .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
