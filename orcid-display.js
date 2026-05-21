@@ -578,11 +578,22 @@ class OrcidProfile extends HTMLElement {
     const contributors = work.contributors || [];
     const putCode = work.putCode || '';
 
-    const title = workSummary.title?.title?.value || 'Untitled';
+    let title = workSummary.title?.title?.value || 'Untitled';
     const subtitle = workSummary.title?.subtitle?.value || '';
-    const journalTitle = workSummary['journal-title']?.value || '';
+    let journalTitle = workSummary['journal-title']?.value || '';
+    const workType = (workSummary.type || '').toLowerCase();
     const pubYear = workSummary['publication-date']?.year?.value || '';
     const pubMonth = workSummary['publication-date']?.month?.value || '';
+
+    // Surface "Preprint" in the journal slot so the date aligns with other items.
+    // Source it from work type when available, or strip a trailing "(Preprint)" from the title.
+    const preprintSuffix = /\s*\(preprint\)\s*$/i;
+    if (preprintSuffix.test(title)) {
+      title = title.replace(preprintSuffix, '').trim();
+      if (!journalTitle) journalTitle = 'Preprint';
+    } else if (!journalTitle && workType === 'preprint') {
+      journalTitle = 'Preprint';
+    }
     // Get external IDs (DOI, etc.)
     const externalIds = workSummary['external-ids']?.['external-id'] || [];
     const doi = externalIds.find(id => id['external-id-type'] === 'doi');
