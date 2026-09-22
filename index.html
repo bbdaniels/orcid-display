@@ -135,6 +135,11 @@
   talk-url="https://example.org/papers/?paper={doi}"
   talk-manifest="https://example.org/papers/manifest.json"&gt;&lt;/orcid-profile&gt;</code></pre>
     <p>Every publication also has a permalink: link to <code>#doi-&lt;slug&gt;</code> to jump to it.</p>
+    <p>The chat panel also works outside the component. Add <code>data-talk-url</code> to any link:</p>
+    <pre><code>&lt;a href="https://example.org/papers/?paper=10.1093%2Fwbro%2Flkag002"
+   data-talk-url="https://example.org/papers/?paper=10.1093%2Fwbro%2Flkag002"
+   data-talk-title="Reassessing the Human Resources Crisis in Primary Health Care"&gt;Talk to this paper&lt;/a&gt;</code></pre>
+    <p><a href="https://example.org/papers/?paper=10.1093%2Fwbro%2Flkag002" data-talk-url="https://example.org/papers/?paper=10.1093%2Fwbro%2Flkag002" data-talk-title="Reassessing the Human Resources Crisis in Primary Health Care">Try it: talk to this paper</a></p>
   </div>
 
   <script src="orcid-display.js"></script>

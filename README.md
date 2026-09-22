@@ -63,6 +63,17 @@ The manifest is either a bare array of DOIs or `{ "papers": [ { "doi": "..." } ]
 
 Clicking the button opens the chat in a side panel (full screen on phones). The page URL becomes `#talk-doi-...`, so the open panel is linkable. Esc, the close button, or a click outside closes it.
 
+### Standalone popout
+
+The same panel works on any page, with or without an `<orcid-profile>`. Load the script and mark a link:
+
+```html
+<script src="https://www.benjaminbdaniels.com/orcid-display/orcid-display.js" defer></script>
+<a href="https://example.org/papers/?paper=10.1234%2Fabcd" data-talk-url="https://example.org/papers/?paper=10.1234%2Fabcd" data-talk-title="Paper title">Talk to this paper</a>
+```
+
+Clicking opens the panel instead of navigating; without JavaScript, or with a modifier key held, the `href` works as a normal link. From script, call `OrcidDisplay.openTalk({ url, title, newTabUrl })` and `OrcidDisplay.closeTalk()`. There is one panel per page, and opening another chat swaps it in place. The embedded page can close the panel itself with `window.parent.postMessage({ type: 'orcid-display:talk-close' }, '*')`.
+
 ## What Gets Displayed
 
 - **Profile header** with name, ORCID ID, and current affiliation

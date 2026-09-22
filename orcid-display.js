@@ -8,6 +8,9 @@
  *   talk-label     Button text (default "Talk to this paper").
  *   talk-manifest  URL of a JSON list of DOIs that have a chat; when set, only
  *                  listed works get the button.
+ *
+ * The talk panel itself is TalkPopout (end of file), shared with any page via
+ * OrcidDisplay.openTalk({ url, title }) or data-talk-url links.
  */
 
 class OrcidProfile extends HTMLElement {
@@ -17,7 +20,12 @@ class OrcidProfile extends HTMLElement {
     this.activeYearFilter = null;
     this.workIndex = new Map(); // card id -> work
     this.onHashChange = () => this.handleHash();
-    this.onTalkKeydown = (e) => { if (e.key === 'Escape') this.closeTalk(); };
+    // Called by the shared popout whenever it closes this component's panel
+    this.onTalkClosed = ({ updateHash = true } = {}) => {
+      const id = this.talkOpenId;
+      this.talkOpenId = null;
+      if (id && updateHash) history.replaceState(null, '', `#${id}`);
+    };
   }
 
   connectedCallback() {
@@ -751,69 +759,22 @@ class OrcidProfile extends HTMLElement {
     }
   }
 
-  ensureTalkLayer() {
-    if (this.talkLayer && this.talkLayer.isConnected) return this.talkLayer;
-    const layer = document.createElement('div');
-    layer.className = 'talk-layer';
-    layer.innerHTML = `
-      <div class="talk-backdrop"></div>
-      <aside class="talk-panel" role="dialog" aria-modal="true" aria-labelledby="talk-title">
-        <header class="talk-header">
-          <h2 class="talk-title" id="talk-title"></h2>
-          <div class="talk-actions">
-            <a class="talk-newtab" target="_blank" rel="noopener">
-              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg>
-              Open in new tab
-            </a>
-            <button type="button" class="talk-close" aria-label="Close">
-              <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
-            </button>
-          </div>
-        </header>
-        <iframe class="talk-frame" allow="clipboard-write"></iframe>
-      </aside>
-    `;
-    layer.querySelector('.talk-backdrop').addEventListener('click', () => this.closeTalk());
-    layer.querySelector('.talk-close').addEventListener('click', () => this.closeTalk());
-    this.shadowRoot.appendChild(layer);
-    this.talkLayer = layer;
-    return layer;
-  }
-
   openTalk(work, trigger) {
-    const layer = this.ensureTalkLayer();
     const url = this.talkUrlFor(work);
-    const frame = layer.querySelector('.talk-frame');
-
-    layer.querySelector('.talk-title').textContent = this.workDisplayTitle(work).title;
-    layer.querySelector('.talk-newtab').href = url;
-    frame.title = this.talkLabel();
-    if (frame.getAttribute('src') !== url) frame.src = url;
-
-    if (!this.talkOpenId) {
-      this.savedRootOverflow = document.documentElement.style.overflow;
-      document.documentElement.style.overflow = 'hidden';
-      document.addEventListener('keydown', this.onTalkKeydown);
-      this.talkReturnFocus = trigger || null;
-    }
     this.talkOpenId = work.id;
-    layer.classList.add('open');
-    layer.querySelector('.talk-close').focus({ preventScroll: true });
+    TalkPopout.open({
+      url,
+      title: this.workDisplayTitle(work).title,
+      frameTitle: this.talkLabel(),
+      trigger,
+      onClose: this.onTalkClosed,
+    });
     history.replaceState(null, '', `#talk-${work.id}`);
   }
 
   closeTalk({ updateHash = true } = {}) {
-    if (!this.talkOpenId || !this.talkLayer) return;
-    const id = this.talkOpenId;
-    this.talkOpenId = null;
-    this.talkLayer.classList.remove('open');
-    // Stop the chat loading or running in the background
-    this.talkLayer.querySelector('.talk-frame').src = 'about:blank';
-    document.documentElement.style.overflow = this.savedRootOverflow || '';
-    document.removeEventListener('keydown', this.onTalkKeydown);
-    if (updateHash) history.replaceState(null, '', `#${id}`);
-    this.talkReturnFocus?.focus({ preventScroll: true });
-    this.talkReturnFocus = null;
+    if (!this.talkOpenId) return;
+    TalkPopout.close({ updateHash });
   }
 
   setupFirstAuthorFilter() {
@@ -1599,117 +1560,6 @@ class OrcidProfile extends HTMLElement {
           }
         }
 
-        /* Talk popout */
-        .talk-layer {
-          position: fixed;
-          inset: 0;
-          z-index: 2147483000;
-          visibility: hidden;
-          pointer-events: none;
-          transition: visibility 0s linear 0.25s;
-        }
-        .talk-layer.open {
-          visibility: visible;
-          pointer-events: auto;
-          transition: visibility 0s;
-        }
-
-        .talk-backdrop {
-          position: absolute;
-          inset: 0;
-          background: rgba(27, 31, 36, 0.45);
-          opacity: 0;
-          transition: opacity 0.25s ease;
-        }
-        .talk-layer.open .talk-backdrop { opacity: 1; }
-
-        .talk-panel {
-          position: absolute;
-          top: 0;
-          right: 0;
-          width: min(560px, 100vw);
-          height: 100vh;
-          height: 100dvh;
-          display: flex;
-          flex-direction: column;
-          background: #ffffff;
-          box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
-          transform: translateX(100%);
-          transition: transform 0.25s ease;
-        }
-        .talk-layer.open .talk-panel { transform: translateX(0); }
-
-        .talk-header {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          padding: 12px 16px;
-          border-bottom: 1px solid #d0d7de;
-        }
-
-        .talk-title {
-          flex: 1;
-          margin: 0;
-          font-size: 15px;
-          font-weight: 600;
-          line-height: 1.4;
-          color: #24292f;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-
-        .talk-actions {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-shrink: 0;
-        }
-
-        .talk-newtab {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 12px;
-          color: #57606a;
-          white-space: nowrap;
-        }
-        .talk-newtab:hover { color: #0969da; }
-
-        .talk-close {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 28px;
-          height: 28px;
-          background: none;
-          border: 1px solid transparent;
-          border-radius: 6px;
-          color: #57606a;
-          cursor: pointer;
-        }
-        .talk-close:hover {
-          background: #f6f8fa;
-          border-color: #d0d7de;
-          color: #24292f;
-        }
-
-        .talk-frame {
-          flex: 1;
-          width: 100%;
-          border: 0;
-          background: #ffffff;
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .talk-panel, .talk-backdrop, .talk-layer { transition: none; }
-        }
-
-        @media (max-width: 640px) {
-          .talk-panel { width: 100vw; box-shadow: none; }
-        }
-
         /* Abstract Toggle */
         .abstract-toggle {
           display: inline-flex;
@@ -1859,15 +1709,6 @@ class OrcidProfile extends HTMLElement {
             0%, 50% { background-color: #1e3a50; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35); }
             100% { background-color: #212c3b; border-color: #2f3d4f; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0); }
           }
-          .talk-backdrop { background: rgba(0, 0, 0, 0.6); }
-          .talk-panel { background: #1a2332; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5); }
-          .talk-header { border-bottom-color: #2f3d4f; }
-          .talk-title { color: #e5e5e5; }
-          .talk-newtab { color: #a3b1c2; }
-          .talk-newtab:hover { color: #60a5fa; }
-          .talk-close { color: #a3b1c2; }
-          .talk-close:hover { background: #2a3545; border-color: #2f3d4f; color: #e5e5e5; }
-          .talk-frame { background: #1a2332; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
           .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
@@ -1885,3 +1726,277 @@ class OrcidProfile extends HTMLElement {
 }
 
 customElements.define('orcid-profile', OrcidProfile);
+
+/**
+ * TalkPopout - the "Talk to this paper" side panel, usable on any page.
+ *
+ *   OrcidDisplay.openTalk({ url, title, newTabUrl })   // newTabUrl defaults to url
+ *   OrcidDisplay.closeTalk()
+ *
+ * Or declaratively: any element with data-talk-url (and optional data-talk-title)
+ * opens the panel on click. Keep an href on it so it still works without JS.
+ *
+ * One panel per page. It renders into its own shadow root on document.body, so its
+ * styles are self-contained. Opening while open swaps the chat in place. The embedded
+ * page can close the panel with
+ *   window.parent.postMessage({ type: 'orcid-display:talk-close' }, '*').
+ */
+class TalkPopout {
+  static instance() {
+    if (!TalkPopout._instance) TalkPopout._instance = new TalkPopout();
+    return TalkPopout._instance;
+  }
+
+  static open(options) { TalkPopout.instance().open(options); }
+
+  static close(detail) { TalkPopout._instance?.close(detail); }
+
+  constructor() {
+    this.isOpen = false;
+    this.onClose = null;
+    this.returnFocus = null;
+    this.onKeydown = (e) => { if (e.key === 'Escape') this.close(); };
+    this.onMessage = (e) => {
+      if (e.data?.type !== 'orcid-display:talk-close') return;
+      if (!this.frame || e.source !== this.frame.contentWindow) return;
+      this.close();
+    };
+  }
+
+  ensureLayer() {
+    if (this.host && this.host.isConnected) return;
+    const host = document.createElement('div');
+    host.setAttribute('data-orcid-talk-popout', '');
+    const root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = `${TalkPopout.styles()}
+      <div class="talk-layer">
+        <div class="talk-backdrop"></div>
+        <aside class="talk-panel" role="dialog" aria-modal="true" aria-labelledby="talk-title">
+          <header class="talk-header">
+            <h2 class="talk-title" id="talk-title"></h2>
+            <div class="talk-actions">
+              <a class="talk-newtab" target="_blank" rel="noopener">
+                <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg>
+                Open in new tab
+              </a>
+              <button type="button" class="talk-close" aria-label="Close">
+                <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+              </button>
+            </div>
+          </header>
+          <iframe class="talk-frame" allow="clipboard-write"></iframe>
+        </aside>
+      </div>
+    `;
+    this.layer = root.querySelector('.talk-layer');
+    this.frame = root.querySelector('.talk-frame');
+    this.titleEl = root.querySelector('.talk-title');
+    this.newTabEl = root.querySelector('.talk-newtab');
+    this.closeBtn = root.querySelector('.talk-close');
+    root.querySelector('.talk-backdrop').addEventListener('click', () => this.close());
+    this.closeBtn.addEventListener('click', () => this.close());
+    document.body.appendChild(host);
+    this.host = host;
+  }
+
+  // options: { url, title, newTabUrl?, frameTitle?, trigger?, onClose? }
+  // onClose(detail) runs once when this opening ends, whether closed or replaced.
+  open({ url, title = '', newTabUrl, frameTitle = 'Talk to this paper', trigger, onClose } = {}) {
+    if (!url) return;
+    this.ensureLayer();
+
+    // A different caller taking over the open panel: end the previous caller's session quietly
+    if (this.isOpen && this.onClose && this.onClose !== onClose) this.onClose({ updateHash: false });
+
+    this.titleEl.textContent = title;
+    this.newTabEl.href = newTabUrl || url;
+    this.frame.title = frameTitle;
+    if (this.frame.getAttribute('src') !== url) this.frame.src = url;
+
+    if (!this.isOpen) {
+      this.savedRootOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      document.addEventListener('keydown', this.onKeydown);
+      window.addEventListener('message', this.onMessage);
+      this.returnFocus = trigger || (document.activeElement !== document.body ? document.activeElement : null);
+    }
+    this.isOpen = true;
+    this.onClose = onClose || null;
+    this.layer.classList.add('open');
+    this.closeBtn.focus({ preventScroll: true });
+  }
+
+  close(detail = {}) {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    this.layer.classList.remove('open');
+    // Stop the chat loading or running in the background
+    this.frame.src = 'about:blank';
+    document.documentElement.style.overflow = this.savedRootOverflow || '';
+    document.removeEventListener('keydown', this.onKeydown);
+    window.removeEventListener('message', this.onMessage);
+    const onClose = this.onClose;
+    this.onClose = null;
+    onClose?.(detail);
+    this.returnFocus?.focus({ preventScroll: true });
+    this.returnFocus = null;
+  }
+
+  static styles() {
+    return `
+      <style>
+        :host { all: initial; }
+        * { box-sizing: border-box; }
+
+        .talk-layer {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483000;
+          visibility: hidden;
+          pointer-events: none;
+          transition: visibility 0s linear 0.25s;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+          font-size: 16px;
+          line-height: 1.5;
+          color: #24292f;
+        }
+        .talk-layer.open {
+          visibility: visible;
+          pointer-events: auto;
+          transition: visibility 0s;
+        }
+
+        .talk-backdrop {
+          position: absolute;
+          inset: 0;
+          background: rgba(27, 31, 36, 0.45);
+          opacity: 0;
+          transition: opacity 0.25s ease;
+        }
+        .talk-layer.open .talk-backdrop { opacity: 1; }
+
+        .talk-panel {
+          position: absolute;
+          top: 0;
+          right: 0;
+          width: min(560px, 100vw);
+          height: 100vh;
+          height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          background: #ffffff;
+          box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+          transform: translateX(100%);
+          transition: transform 0.25s ease;
+        }
+        .talk-layer.open .talk-panel { transform: translateX(0); }
+
+        .talk-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 12px 16px;
+          border-bottom: 1px solid #d0d7de;
+        }
+
+        .talk-title {
+          flex: 1;
+          margin: 0;
+          font-size: 15px;
+          font-weight: 600;
+          line-height: 1.4;
+          color: #24292f;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        .talk-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .talk-newtab {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 12px;
+          color: #57606a;
+          white-space: nowrap;
+          text-decoration: none;
+        }
+        .talk-newtab:hover { color: #0969da; text-decoration: underline; }
+
+        .talk-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          background: none;
+          border: 1px solid transparent;
+          border-radius: 6px;
+          color: #57606a;
+          cursor: pointer;
+        }
+        .talk-close:hover {
+          background: #f6f8fa;
+          border-color: #d0d7de;
+          color: #24292f;
+        }
+
+        .talk-frame {
+          flex: 1;
+          width: 100%;
+          border: 0;
+          background: #ffffff;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .talk-panel, .talk-backdrop, .talk-layer { transition: none; }
+        }
+
+        @media (max-width: 640px) {
+          .talk-panel { width: 100vw; box-shadow: none; }
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .talk-layer { color: #e5e5e5; }
+          .talk-backdrop { background: rgba(0, 0, 0, 0.6); }
+          .talk-panel { background: #1a2332; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5); }
+          .talk-header { border-bottom-color: #2f3d4f; }
+          .talk-title { color: #e5e5e5; }
+          .talk-newtab { color: #a3b1c2; }
+          .talk-newtab:hover { color: #60a5fa; }
+          .talk-close { color: #a3b1c2; }
+          .talk-close:hover { background: #2a3545; border-color: #2f3d4f; color: #e5e5e5; }
+          .talk-frame { background: #1a2332; }
+        }
+      </style>
+    `;
+  }
+}
+
+window.OrcidDisplay = window.OrcidDisplay || {};
+if (!window.OrcidDisplay.TalkPopout) {
+  window.OrcidDisplay.TalkPopout = TalkPopout;
+  window.OrcidDisplay.openTalk = (options) => TalkPopout.open(options);
+  window.OrcidDisplay.closeTalk = () => TalkPopout.close();
+
+  // Declarative use: <a href="..." data-talk-url="..." data-talk-title="...">
+  document.addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const el = e.target instanceof Element ? e.target.closest('[data-talk-url]') : null;
+    if (!el) return;
+    e.preventDefault();
+    TalkPopout.open({
+      url: el.getAttribute('data-talk-url'),
+      title: el.getAttribute('data-talk-title') || el.textContent.trim(),
+      newTabUrl: el.getAttribute('href') || undefined,
+      trigger: el,
+    });
+  });
+}
