@@ -61,7 +61,7 @@ If you host a chat for some of your papers, point the component at it:
 
 The manifest is either a bare array of DOIs or `{ "papers": [ { "doi": "..." } ] }`. DOIs match case-insensitively against both the published and working-paper versions of a work. If the manifest cannot be loaded, no buttons render.
 
-Clicking the button opens the chat in a side panel (full screen on phones). The page URL becomes `#talk-doi-...`, so the open panel is linkable. Esc, the close button, or a click outside closes it.
+Clicking the button opens the chat in a side panel (full screen on phones). The page URL becomes `#talk-doi-...`, so the open panel is linkable, and the panel's "Open in new tab" link points at that same permalink, so a reader who pops it out lands back on this page with the panel open. Esc, the close button, or a click outside closes it.
 
 ### Standalone popout
 
@@ -72,7 +72,7 @@ The same panel works on any page, with or without an `<orcid-profile>`. Load the
 <a href="https://example.org/papers/?paper=10.1234%2Fabcd" data-talk-url="https://example.org/papers/?paper=10.1234%2Fabcd" data-talk-title="Paper title">Talk to this paper</a>
 ```
 
-Clicking opens the panel instead of navigating; without JavaScript, or with a modifier key held, the `href` works as a normal link. From script, call `OrcidDisplay.openTalk({ url, title, newTabUrl })` and `OrcidDisplay.closeTalk()`. There is one panel per page, and opening another chat swaps it in place. The embedded page can close the panel itself with `window.parent.postMessage({ type: 'orcid-display:talk-close' }, '*')`.
+Clicking opens the panel instead of navigating. An optional `data-talk-permalink` sets where "Open in new tab" goes (otherwise the `href`); without JavaScript, or with a modifier key held, the `href` works as a normal link. From script, call `OrcidDisplay.openTalk({ url, title, newTabUrl })` and `OrcidDisplay.closeTalk()`. There is one panel per page, and opening another chat swaps it in place. The embedded page can close the panel itself with `window.parent.postMessage({ type: 'orcid-display:talk-close' }, '*')`.
 
 ## What Gets Displayed
 

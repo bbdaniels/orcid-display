@@ -764,6 +764,8 @@ class OrcidProfile extends HTMLElement {
     this.talkOpenId = work.id;
     TalkPopout.open({
       url,
+      // "Open in new tab" lands on this page with the panel open, not on the bare chat
+      newTabUrl: `${location.href.split('#')[0]}#talk-${work.id}`,
       title: this.workDisplayTitle(work).title,
       frameTitle: this.talkLabel(),
       trigger,
@@ -1733,8 +1735,10 @@ customElements.define('orcid-profile', OrcidProfile);
  *   OrcidDisplay.openTalk({ url, title, newTabUrl })   // newTabUrl defaults to url
  *   OrcidDisplay.closeTalk()
  *
- * Or declaratively: any element with data-talk-url (and optional data-talk-title)
- * opens the panel on click. Keep an href on it so it still works without JS.
+ * Or declaratively: any element with data-talk-url (and optional data-talk-title,
+ * data-talk-permalink) opens the panel on click. Keep an href on it so it still
+ * works without JS. "Open in new tab" goes to data-talk-permalink, else the href,
+ * else the iframe URL.
  *
  * One panel per page. It renders into its own shadow root on document.body, so its
  * styles are self-contained. Opening while open swaps the chat in place. The embedded
@@ -1986,7 +1990,7 @@ if (!window.OrcidDisplay.TalkPopout) {
   window.OrcidDisplay.openTalk = (options) => TalkPopout.open(options);
   window.OrcidDisplay.closeTalk = () => TalkPopout.close();
 
-  // Declarative use: <a href="..." data-talk-url="..." data-talk-title="...">
+  // Declarative use: <a href="..." data-talk-url="..." data-talk-title="..." data-talk-permalink="...">
   document.addEventListener('click', (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const el = e.target instanceof Element ? e.target.closest('[data-talk-url]') : null;
@@ -1995,7 +1999,7 @@ if (!window.OrcidDisplay.TalkPopout) {
     TalkPopout.open({
       url: el.getAttribute('data-talk-url'),
       title: el.getAttribute('data-talk-title') || el.textContent.trim(),
-      newTabUrl: el.getAttribute('href') || undefined,
+      newTabUrl: el.getAttribute('data-talk-permalink') || el.getAttribute('href') || undefined,
       trigger: el,
     });
   });
