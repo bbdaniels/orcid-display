@@ -1,6 +1,13 @@
 /**
  * ORCID Display - Display ORCID profiles and publications as beautiful cards
  * Usage: <orcid-profile orcid="0000-0000-0000-0000"></orcid-profile>
+ *
+ * Optional attributes:
+ *   talk-url       URL template for a per-paper chat, opened in a side panel.
+ *                  Placeholders: {doi} (URL-encoded), {slug}, {putcode}.
+ *   talk-label     Button text (default "Talk to this paper").
+ *   talk-manifest  URL of a JSON list of DOIs that have a chat; when set, only
+ *                  listed works get the button.
  */
 
 class OrcidProfile extends HTMLElement {
@@ -8,6 +15,9 @@ class OrcidProfile extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.activeYearFilter = null;
+    this.workIndex = new Map(); // card id -> work
+    this.onHashChange = () => this.handleHash();
+    this.onTalkKeydown = (e) => { if (e.key === 'Escape') this.closeTalk(); };
   }
 
   connectedCallback() {
@@ -16,12 +26,22 @@ class OrcidProfile extends HTMLElement {
       this.shadowRoot.innerHTML = '<p style="color: #cf222e;">Error: Missing "orcid" attribute</p>';
       return;
     }
+    window.addEventListener('hashchange', this.onHashChange);
     this.render(orcid);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('hashchange', this.onHashChange);
+    this.closeTalk({ updateHash: false });
   }
 
   async render(orcid) {
     // Show loading state
     this.shadowRoot.innerHTML = this.getStyles() + '<div class="loading">Loading ORCID profile...</div>';
+
+    // Fetch the talk manifest in parallel with ORCID; buttons are applied once both are in
+    this.talkManifestValue = undefined;
+    this.talkManifest = this.loadTalkManifest().then(v => (this.talkManifestValue = v));
 
     try {
       // Fetch ORCID profile data using public API
@@ -57,6 +77,13 @@ class OrcidProfile extends HTMLElement {
         };
       }).filter(w => w.summary);
 
+      // Stable per-work ids for permalinks and the talk popout
+      this.workIndex = new Map();
+      for (const work of works) {
+        work.id = this.slugForWork(work);
+        this.workIndex.set(work.id, work);
+      }
+
       // Store for lazy loading
       this.orcid = orcid;
       this.works = works;
@@ -66,6 +93,11 @@ class OrcidProfile extends HTMLElement {
       this.setupSearch();
       this.setupActivityChart();
       this.setupFirstAuthorFilter();
+      this.setupPermalinks();
+
+      // Resolve #doi-... / #work-... / #talk-... now that the cards exist
+      this.handleHash();
+      this.applyTalkButtons();
 
       // Lazy load contributors in background
       this.lazyLoadContributors(orcid, works);
@@ -147,9 +179,57 @@ class OrcidProfile extends HTMLElement {
   }
 
   getWorkDOI(work) {
-    const externalIds = work.summary?.['external-ids']?.['external-id'] || [];
-    const doi = externalIds.find(id => id['external-id-type'] === 'doi');
-    return doi ? doi['external-id-value'] : null;
+    return this.getWorkDois(work).published;
+  }
+
+  getWorkDois(work) {
+    // Collect DOIs across all summaries in the group (ORCID auto-groups by shared IDs).
+    // Working-paper DOIs (NBER, SSRN, arXiv, OSF, bioRxiv/medRxiv) get surfaced as an
+    // open-access alternative when the primary entry is a paywalled published version.
+    const allSummaries = work.allSummaries && work.allSummaries.length ? work.allSummaries : [work.summary];
+    const seen = new Set();
+    const all = [];
+    for (const s of allSummaries) {
+      const ids = s?.['external-ids']?.['external-id'] || [];
+      for (const id of ids) {
+        if (id['external-id-type'] !== 'doi') continue;
+        const val = id['external-id-value'];
+        if (!val) continue;
+        const key = this.normalizeDoi(val);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(val);
+      }
+    }
+    const wpPrefixRe = /^10\.(3386|2139|48550|31219|1101)\//i;
+    const published = all.find(d => !wpPrefixRe.test(d)) || all[0] || null;
+    const workingPaper = all.find(d => wpPrefixRe.test(d) && d.toLowerCase() !== (published || '').toLowerCase()) || null;
+    return { all, published, workingPaper };
+  }
+
+  normalizeDoi(doi) {
+    return String(doi || '').trim().toLowerCase()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+      .replace(/^doi:\s*/, '');
+  }
+
+  slugForWork(work) {
+    // "doi-" + primary DOI with every run outside [a-z0-9] collapsed to "-"; else "work-<putCode>"
+    const doi = this.getWorkDois(work).published;
+    if (doi) {
+      const slug = this.normalizeDoi(doi).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      if (slug) return `doi-${slug}`;
+    }
+    return `work-${work.putCode}`;
+  }
+
+  workDisplayTitle(work) {
+    // Title with a trailing "(Preprint)" stripped; the preprint flag moves to the journal slot
+    const raw = work.summary?.title?.title?.value || 'Untitled';
+    const preprintSuffix = /\s*\(preprint\)\s*$/i;
+    return preprintSuffix.test(raw)
+      ? { title: raw.replace(preprintSuffix, '').trim(), preprint: true }
+      : { title: raw, preprint: false };
   }
 
   async lazyLoadZenodo(orcid) {
@@ -469,12 +549,7 @@ class OrcidProfile extends HTMLElement {
 
         // Toggle filter
         if (this.activeYearFilter === year) {
-          // Clear filter
-          this.activeYearFilter = null;
-          yearBtns.forEach(b => b.classList.remove('active'));
-          works.forEach(w => w.style.display = '');
-          if (statusEl) statusEl.textContent = '';
-          if (workCountEl) workCountEl.textContent = `${works.length} works`;
+          this.clearAllFilters();
         } else {
           // Apply filter
           this.activeYearFilter = year;
@@ -499,15 +574,246 @@ class OrcidProfile extends HTMLElement {
           const clearBtn = statusEl?.querySelector('.clear-filter');
           clearBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.activeYearFilter = null;
-            yearBtns.forEach(b => b.classList.remove('active'));
-            works.forEach(w => w.style.display = '');
-            if (statusEl) statusEl.textContent = '';
-            if (workCountEl) workCountEl.textContent = `${works.length} works`;
+            this.clearAllFilters();
           });
         }
       });
     });
+  }
+
+  clearAllFilters() {
+    // Reset search, year, and first-author filters and show every card
+    const works = this.shadowRoot.querySelectorAll('.work');
+    const search = this.shadowRoot.querySelector('.search');
+    if (search) search.value = '';
+    this.activeYearFilter = null;
+    this.shadowRoot.querySelectorAll('.chart-year-btn').forEach(b => b.classList.remove('active'));
+    this.shadowRoot.querySelector('.first-author-filter')?.classList.remove('active');
+    const statusEl = this.shadowRoot.querySelector('.activity-filter-status');
+    if (statusEl) statusEl.textContent = '';
+    works.forEach(w => w.style.display = '');
+    const workCountEl = this.shadowRoot.querySelector('.work-count');
+    if (workCountEl) workCountEl.textContent = `${works.length} works`;
+  }
+
+  // ---- Permalinks ----
+
+  setupPermalinks() {
+    this.shadowRoot.querySelectorAll('.permalink').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const id = link.dataset.workId;
+        if (location.hash === `#${id}`) {
+          this.handleHash();
+        } else {
+          location.hash = id; // fires hashchange -> scroll + highlight
+        }
+        const url = `${location.href.split('#')[0]}#${id}`;
+        this.copyText(url).then(ok => {
+          if (!ok) return;
+          const status = link.nextElementSibling;
+          if (!status || !status.classList.contains('permalink-status')) return;
+          status.textContent = 'Link copied';
+          clearTimeout(status._timer);
+          status._timer = setTimeout(() => { status.textContent = ''; }, 1800);
+        });
+      });
+    });
+  }
+
+  async copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      // Fall back to a hidden textarea + execCommand (older browsers, non-secure contexts)
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+        this.shadowRoot.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (err) {
+        return false;
+      }
+    }
+  }
+
+  handleHash() {
+    const raw = decodeURIComponent(location.hash.replace(/^#/, ''));
+    const m = raw.match(/^(talk-)?((?:doi|work)-.+)$/);
+    const work = m ? this.workIndex.get(m[2]) : null;
+    if (!work) {
+      // Hash moved away from a paper (e.g. back button): close any open popout
+      if (this.talkOpenId) this.closeTalk({ updateHash: false });
+      return;
+    }
+    this.scrollToWork(work.id);
+    if (m[1]) {
+      this.talkManifest.then(() => {
+        if (this.isTalkEligible(work)) this.openTalk(work);
+      });
+    } else if (this.talkOpenId) {
+      this.closeTalk({ updateHash: false });
+    }
+  }
+
+  scrollToWork(id) {
+    const card = this.shadowRoot.getElementById(id);
+    if (!card) return;
+    // A filter may be hiding the target; clear it so there is something to scroll to
+    if (card.style.display === 'none') this.clearAllFilters();
+    card.scrollIntoView({ block: 'start' });
+    card.classList.remove('work--target');
+    void card.offsetWidth; // restart the highlight animation
+    card.classList.add('work--target');
+    clearTimeout(card._targetTimer);
+    card._targetTimer = setTimeout(() => card.classList.remove('work--target'), 3000);
+  }
+
+  // ---- Talk to this paper ----
+
+  async loadTalkManifest() {
+    // Resolves to: undefined (no manifest attribute: every DOI is eligible),
+    // a Set of normalized DOIs, or null (manifest failed: nothing is eligible).
+    const url = this.getAttribute('talk-manifest');
+    if (!this.getAttribute('talk-url') || !url) return undefined;
+    try {
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (Array.isArray(data?.papers) ? data.papers : null);
+      if (!list) return null;
+      const dois = new Set();
+      for (const entry of list) {
+        const doi = typeof entry === 'string' ? entry : entry?.doi;
+        if (doi) dois.add(this.normalizeDoi(doi));
+      }
+      return dois;
+    } catch (e) {
+      console.warn('Talk manifest fetch failed:', e);
+      return null;
+    }
+  }
+
+  talkDoiFor(work) {
+    // The DOI the chat host knows this work by: the manifest-listed one if any, else the primary
+    const { all, published } = this.getWorkDois(work);
+    const manifest = this.talkManifestValue;
+    if (manifest === undefined) return published;
+    if (!manifest) return null;
+    if (published && manifest.has(this.normalizeDoi(published))) return published;
+    return all.find(d => manifest.has(this.normalizeDoi(d))) || null;
+  }
+
+  isTalkEligible(work) {
+    return !!this.getAttribute('talk-url') && !!this.talkDoiFor(work);
+  }
+
+  talkUrlFor(work) {
+    const doi = this.talkDoiFor(work) || '';
+    const slug = work.id.replace(/^(doi|work)-/, '');
+    return this.getAttribute('talk-url')
+      .replace(/\{doi\}/g, encodeURIComponent(doi))
+      .replace(/\{slug\}/g, encodeURIComponent(slug))
+      .replace(/\{putcode\}/g, encodeURIComponent(work.putCode ?? ''));
+  }
+
+  talkLabel() {
+    return this.getAttribute('talk-label') || 'Talk to this paper';
+  }
+
+  async applyTalkButtons() {
+    if (!this.getAttribute('talk-url')) return;
+    await this.talkManifest;
+    const label = this.talkLabel();
+    for (const work of this.works || []) {
+      if (!this.isTalkEligible(work)) continue;
+      const card = this.shadowRoot.getElementById(work.id);
+      const metaEl = card?.querySelector('.work-meta');
+      if (!metaEl || metaEl.querySelector('.talk-badge')) continue;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'talk-badge';
+      btn.innerHTML = `
+        <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>`;
+      btn.appendChild(document.createTextNode(` ${label}`));
+      btn.addEventListener('click', () => this.openTalk(work, btn));
+
+      const wpBadge = metaEl.querySelector('.working-paper-badge');
+      if (wpBadge) wpBadge.insertAdjacentElement('afterend', btn);
+      else metaEl.appendChild(btn);
+    }
+  }
+
+  ensureTalkLayer() {
+    if (this.talkLayer && this.talkLayer.isConnected) return this.talkLayer;
+    const layer = document.createElement('div');
+    layer.className = 'talk-layer';
+    layer.innerHTML = `
+      <div class="talk-backdrop"></div>
+      <aside class="talk-panel" role="dialog" aria-modal="true" aria-labelledby="talk-title">
+        <header class="talk-header">
+          <h2 class="talk-title" id="talk-title"></h2>
+          <div class="talk-actions">
+            <a class="talk-newtab" target="_blank" rel="noopener">
+              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg>
+              Open in new tab
+            </a>
+            <button type="button" class="talk-close" aria-label="Close">
+              <svg viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>
+            </button>
+          </div>
+        </header>
+        <iframe class="talk-frame" allow="clipboard-write"></iframe>
+      </aside>
+    `;
+    layer.querySelector('.talk-backdrop').addEventListener('click', () => this.closeTalk());
+    layer.querySelector('.talk-close').addEventListener('click', () => this.closeTalk());
+    this.shadowRoot.appendChild(layer);
+    this.talkLayer = layer;
+    return layer;
+  }
+
+  openTalk(work, trigger) {
+    const layer = this.ensureTalkLayer();
+    const url = this.talkUrlFor(work);
+    const frame = layer.querySelector('.talk-frame');
+
+    layer.querySelector('.talk-title').textContent = this.workDisplayTitle(work).title;
+    layer.querySelector('.talk-newtab').href = url;
+    frame.title = this.talkLabel();
+    if (frame.getAttribute('src') !== url) frame.src = url;
+
+    if (!this.talkOpenId) {
+      this.savedRootOverflow = document.documentElement.style.overflow;
+      document.documentElement.style.overflow = 'hidden';
+      document.addEventListener('keydown', this.onTalkKeydown);
+      this.talkReturnFocus = trigger || null;
+    }
+    this.talkOpenId = work.id;
+    layer.classList.add('open');
+    layer.querySelector('.talk-close').focus({ preventScroll: true });
+    history.replaceState(null, '', `#talk-${work.id}`);
+  }
+
+  closeTalk({ updateHash = true } = {}) {
+    if (!this.talkOpenId || !this.talkLayer) return;
+    const id = this.talkOpenId;
+    this.talkOpenId = null;
+    this.talkLayer.classList.remove('open');
+    // Stop the chat loading or running in the background
+    this.talkLayer.querySelector('.talk-frame').src = 'about:blank';
+    document.documentElement.style.overflow = this.savedRootOverflow || '';
+    document.removeEventListener('keydown', this.onTalkKeydown);
+    if (updateHash) history.replaceState(null, '', `#${id}`);
+    this.talkReturnFocus?.focus({ preventScroll: true });
+    this.talkReturnFocus = null;
   }
 
   setupFirstAuthorFilter() {
@@ -580,7 +886,7 @@ class OrcidProfile extends HTMLElement {
     const contributors = work.contributors || [];
     const putCode = work.putCode || '';
 
-    let title = workSummary.title?.title?.value || 'Untitled';
+    const { title, preprint } = this.workDisplayTitle(work);
     const subtitle = workSummary.title?.subtitle?.value || '';
     let journalTitle = workSummary['journal-title']?.value || '';
     const workType = (workSummary.type || '').toLowerCase();
@@ -588,36 +894,12 @@ class OrcidProfile extends HTMLElement {
     const pubMonth = workSummary['publication-date']?.month?.value || '';
 
     // Surface "Preprint" in the journal slot so the date aligns with other items.
-    // Source it from work type when available, or strip a trailing "(Preprint)" from the title.
-    const preprintSuffix = /\s*\(preprint\)\s*$/i;
-    if (preprintSuffix.test(title)) {
-      title = title.replace(preprintSuffix, '').trim();
-      if (!journalTitle) journalTitle = 'Preprint';
-    } else if (!journalTitle && workType === 'preprint') {
+    // Source it from work type when available, or from a trailing "(Preprint)" in the title.
+    if (!journalTitle && (preprint || workType === 'preprint')) {
       journalTitle = 'Preprint';
     }
-    // Collect DOIs across all summaries in the group (ORCID auto-groups by shared IDs).
-    // Working-paper DOIs (NBER, SSRN, arXiv, OSF, bioRxiv/medRxiv) get surfaced as an
-    // open-access alternative when the primary entry is a paywalled published version.
-    const allSummaries = work.allSummaries && work.allSummaries.length ? work.allSummaries : [workSummary];
-    const seen = new Set();
-    const allDois = [];
-    for (const s of allSummaries) {
-      const ids = s?.['external-ids']?.['external-id'] || [];
-      for (const id of ids) {
-        if (id['external-id-type'] !== 'doi') continue;
-        const val = id['external-id-value'];
-        if (!val) continue;
-        const key = val.toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        allDois.push(val);
-      }
-    }
-    const wpPrefixRe = /^10\.(3386|2139|48550|31219|1101)\//i;
-    const publishedDoi = allDois.find(d => !wpPrefixRe.test(d)) || allDois[0] || null;
-    const workingPaperDoi = allDois.find(d => wpPrefixRe.test(d) && d.toLowerCase() !== (publishedDoi || '').toLowerCase()) || null;
-    const doi = publishedDoi ? { 'external-id-value': publishedDoi } : null;
+    const { published: publishedDoi, workingPaper: workingPaperDoi } = this.getWorkDois(work);
+    const workId = work.id || this.slugForWork(work);
     const doiUrl = publishedDoi ? `https://doi.org/${publishedDoi}` : null;
     const workingPaperUrl = workingPaperDoi ? `https://doi.org/${workingPaperDoi}` : null;
     const workingPaperLabel = this.workingPaperLabel(workingPaperDoi);
@@ -629,7 +911,7 @@ class OrcidProfile extends HTMLElement {
     const isFirstAuthor = work.contributors !== null ? this.isFirstAuthor(contributors) : false;
 
     return `
-      <article class="work" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}" data-year="${pubYear}" data-put-code="${putCode}" data-first-author="${isFirstAuthor}">
+      <article class="work" id="${workId}" data-title="${title.toLowerCase()}" data-journal="${(journalTitle || '').toLowerCase()}" data-year="${pubYear}" data-put-code="${putCode}" data-first-author="${isFirstAuthor}">
         <div class="work-header">
           ${journalTitle ? `<span class="work-journal-tag">${journalTitle}</span>` : ''}
           ${pubDate ? `<span class="work-date">${pubDate}</span>` : ''}
@@ -637,6 +919,8 @@ class OrcidProfile extends HTMLElement {
         <h3 class="work-title">
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener">${title}</a>` : title}
           ${doiUrl ? `<a href="${doiUrl}" target="_blank" rel="noopener" class="doi-inline"><svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M4.75 2A2.75 2.75 0 0 0 2 4.75v6.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-3.5a.75.75 0 0 0-1.5 0v3.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-6.5c0-.69.56-1.25 1.25-1.25h3.5a.75.75 0 0 0 0-1.5h-3.5Z"/><path fill="currentColor" d="M8.22 8.28a.75.75 0 0 0 1.06-1.06L6.56 4.5h2.69a.75.75 0 0 0 0-1.5h-4.5a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0V5.56l2.72 2.72Z" transform="translate(16,0) scale(-1,1)"/></svg> DOI</a>` : ''}
+          <a href="#${workId}" class="permalink" data-work-id="${workId}" title="Copy link to this paper" aria-label="Copy link to this paper"><svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="m7.775 3.275 1.25-1.25a3.5 3.5 0 1 1 4.95 4.95l-2.5 2.5a3.5 3.5 0 0 1-4.95 0 .751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018 1.998 1.998 0 0 0 2.83 0l2.5-2.5a2.002 2.002 0 0 0-2.83-2.83l-1.25 1.25a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042Zm-4.69 9.64a1.998 1.998 0 0 0 2.83 0l1.25-1.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042l-1.25 1.25a3.5 3.5 0 1 1-4.95-4.95l2.5-2.5a3.5 3.5 0 0 1 4.95 0 .751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018 1.998 1.998 0 0 0-2.83 0l-2.5 2.5a1.998 1.998 0 0 0 0 2.83Z"/></svg></a>
+          <span class="permalink-status" aria-live="polite"></span>
         </h3>
         <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
@@ -1250,6 +1534,182 @@ class OrcidProfile extends HTMLElement {
           text-decoration: none;
         }
 
+        .talk-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          font-family: inherit;
+          line-height: inherit;
+          padding: 3px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+        }
+        .talk-badge:hover {
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #afb8c1;
+        }
+
+        /* Permalinks */
+        .work {
+          scroll-margin-top: var(--orcid-scroll-offset, 24px);
+        }
+
+        .permalink {
+          display: inline-flex;
+          align-items: center;
+          color: #8b949e;
+          margin-left: 4px;
+          vertical-align: middle;
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        .work:hover .permalink,
+        .permalink:focus-visible { opacity: 1; }
+        .permalink:hover { color: #0969da; text-decoration: none; }
+        @media (hover: none) {
+          .permalink { opacity: 1; }
+        }
+
+        .permalink-status {
+          font-size: 11px;
+          font-weight: 400;
+          color: #1a7f37;
+          margin-left: 4px;
+          vertical-align: middle;
+        }
+
+        .work.work--target {
+          animation: work-target-fade 3s ease-out forwards;
+        }
+        @keyframes work-target-fade {
+          0%, 50% {
+            background-color: #ddf4ff;
+            border-color: #54aeff;
+            box-shadow: 0 0 0 3px rgba(84, 174, 255, 0.35);
+          }
+          100% {
+            background-color: #ffffff;
+            border-color: #d0d7de;
+            box-shadow: 0 0 0 3px rgba(84, 174, 255, 0);
+          }
+        }
+
+        /* Talk popout */
+        .talk-layer {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483000;
+          visibility: hidden;
+          pointer-events: none;
+          transition: visibility 0s linear 0.25s;
+        }
+        .talk-layer.open {
+          visibility: visible;
+          pointer-events: auto;
+          transition: visibility 0s;
+        }
+
+        .talk-backdrop {
+          position: absolute;
+          inset: 0;
+          background: rgba(27, 31, 36, 0.45);
+          opacity: 0;
+          transition: opacity 0.25s ease;
+        }
+        .talk-layer.open .talk-backdrop { opacity: 1; }
+
+        .talk-panel {
+          position: absolute;
+          top: 0;
+          right: 0;
+          width: min(560px, 100vw);
+          height: 100vh;
+          height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          background: #ffffff;
+          box-shadow: -8px 0 24px rgba(0, 0, 0, 0.15);
+          transform: translateX(100%);
+          transition: transform 0.25s ease;
+        }
+        .talk-layer.open .talk-panel { transform: translateX(0); }
+
+        .talk-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 12px 16px;
+          border-bottom: 1px solid #d0d7de;
+        }
+
+        .talk-title {
+          flex: 1;
+          margin: 0;
+          font-size: 15px;
+          font-weight: 600;
+          line-height: 1.4;
+          color: #24292f;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        .talk-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .talk-newtab {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 12px;
+          color: #57606a;
+          white-space: nowrap;
+        }
+        .talk-newtab:hover { color: #0969da; }
+
+        .talk-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          background: none;
+          border: 1px solid transparent;
+          border-radius: 6px;
+          color: #57606a;
+          cursor: pointer;
+        }
+        .talk-close:hover {
+          background: #f6f8fa;
+          border-color: #d0d7de;
+          color: #24292f;
+        }
+
+        .talk-frame {
+          flex: 1;
+          width: 100%;
+          border: 0;
+          background: #ffffff;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .talk-panel, .talk-backdrop, .talk-layer { transition: none; }
+        }
+
+        @media (max-width: 640px) {
+          .talk-panel { width: 100vw; box-shadow: none; }
+        }
+
         /* Abstract Toggle */
         .abstract-toggle {
           display: inline-flex;
@@ -1389,6 +1849,25 @@ class OrcidProfile extends HTMLElement {
           .zenodo-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .working-paper-badge { border-color: #2f3d4f; color: #a3b1c2; }
           .working-paper-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .talk-badge { border-color: #2f3d4f; color: #a3b1c2; }
+          .talk-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .permalink { color: #8b949e; }
+          .permalink:hover { color: #60a5fa; }
+          .permalink-status { color: #3fb950; }
+          .work.work--target { animation-name: work-target-fade-dark; }
+          @keyframes work-target-fade-dark {
+            0%, 50% { background-color: #1e3a50; border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35); }
+            100% { background-color: #212c3b; border-color: #2f3d4f; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0); }
+          }
+          .talk-backdrop { background: rgba(0, 0, 0, 0.6); }
+          .talk-panel { background: #1a2332; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5); }
+          .talk-header { border-bottom-color: #2f3d4f; }
+          .talk-title { color: #e5e5e5; }
+          .talk-newtab { color: #a3b1c2; }
+          .talk-newtab:hover { color: #60a5fa; }
+          .talk-close { color: #a3b1c2; }
+          .talk-close:hover { background: #2a3545; border-color: #2f3d4f; color: #e5e5e5; }
+          .talk-frame { background: #1a2332; }
           .abstract-toggle { border-color: #2f3d4f; color: #a3b1c2; }
           .abstract-toggle:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .abstract-toggle.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }

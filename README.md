@@ -13,6 +13,8 @@ Display ORCID profiles and publications as beautiful, embeddable cards on any we
 - **Author highlighting** - Profile owner's name highlighted in author lists
 - **Abstracts** - Expandable abstracts from OpenAlex with AI-generated TL;DRs from Semantic Scholar
 - **Search** - Filter publications by title or journal
+- **Permalinks** - Every publication has a linkable anchor; the link icon copies it
+- **Talk to this paper** - Optional side panel that opens a per-paper chat you host
 - **Keywords & links** - Display research keywords and external URLs
 - **Responsive** - Looks great on desktop and mobile
 - **Shadow DOM** - Styles won't conflict with your site
@@ -31,6 +33,35 @@ Replace `0000-0001-9652-6653` with any ORCID ID.
 ## Demo
 
 See it in action: [bbdaniels.github.io/orcid-display](https://www.benjaminbdaniels.com/orcid-display)
+
+## Attributes
+
+| Attribute | Required | Description |
+|-----------|----------|-------------|
+| `orcid` | yes | The ORCID ID to display |
+| `talk-url` | no | URL template for a per-paper chat. Turns on the "Talk to this paper" button. Placeholders: `{doi}` (URL-encoded DOI), `{slug}` (the DOI in slug form, as in the permalink), `{putcode}` (ORCID put-code) |
+| `talk-label` | no | Button text. Default: `Talk to this paper` |
+| `talk-manifest` | no | URL of a JSON file listing the DOIs that have a chat. Only listed works get a button. Without it, every work with a DOI gets one |
+
+### Permalinks
+
+Each publication card gets an `id` built from its DOI (`doi-10-1016-j-jdeveco-2026-103795`), or `work-<put-code>` when there is no DOI. Linking to `your-page#doi-...` scrolls to the card and highlights it, clearing any active filter that would hide it. The small link icon next to the DOI copies the link.
+
+### Talk to this paper
+
+If you host a chat for some of your papers, point the component at it:
+
+```html
+<orcid-profile
+  orcid="0000-0001-9652-6653"
+  talk-url="https://example.org/papers/?paper={doi}"
+  talk-manifest="https://example.org/papers/manifest.json">
+</orcid-profile>
+```
+
+The manifest is either a bare array of DOIs or `{ "papers": [ { "doi": "..." } ] }`. DOIs match case-insensitively against both the published and working-paper versions of a work. If the manifest cannot be loaded, no buttons render.
+
+Clicking the button opens the chat in a side panel (full screen on phones). The page URL becomes `#talk-doi-...`, so the open panel is linkable. Esc, the close button, or a click outside closes it.
 
 ## What Gets Displayed
 

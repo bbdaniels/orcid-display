@@ -112,7 +112,9 @@
   <p class="tagline">Display ORCID profiles and publications as beautiful, embeddable cards</p>
 
   <div class="demo-container" id="profile-container">
-    <orcid-profile orcid="0000-0001-9652-6653"></orcid-profile>
+    <orcid-profile orcid="0000-0001-9652-6653"
+      talk-url="https://example.org/papers/?paper={doi}"
+      talk-manifest="https://example.org/papers/manifest.json"></orcid-profile>
   </div>
 
   <div class="try-it">
@@ -128,6 +130,11 @@
     <pre><code>&lt;script src="https://www.benjaminbdaniels.com/orcid-display/orcid-display.js"&gt;&lt;/script&gt;
 &lt;orcid-profile orcid="0000-0001-9652-6653"&gt;&lt;/orcid-profile&gt;</code></pre>
     <p>Replace the ORCID ID with your own or any researcher's ORCID.</p>
+    <p>To add a "Talk to this paper" button, point <code>talk-url</code> at a chat you host and, optionally, <code>talk-manifest</code> at a JSON list of the DOIs it covers:</p>
+    <pre><code>&lt;orcid-profile orcid="0000-0001-9652-6653"
+  talk-url="https://example.org/papers/?paper={doi}"
+  talk-manifest="https://example.org/papers/manifest.json"&gt;&lt;/orcid-profile&gt;</code></pre>
+    <p>Every publication also has a permalink: link to <code>#doi-&lt;slug&gt;</code> to jump to it.</p>
   </div>
 
   <script src="orcid-display.js"></script>
