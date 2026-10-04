@@ -102,7 +102,12 @@ test('the site\'s versions.json, when checked out, has the shape the widget read
   for (const p of papers) {
     assert.ok(p.doi || p.title, JSON.stringify(p));
     for (const v of p.versions) {
-      assert.ok(['working-paper', 'preprint', 'duplicate'].includes(v.kind), JSON.stringify(v));
+      assert.ok(['working-paper', 'preprint', 'accepted-manuscript', 'duplicate'].includes(v.kind), JSON.stringify(v));
+      if (v.kind === 'accepted-manuscript') {
+        // Shares the article's DOI and is not an ORCID record: nothing for the widget to match or link
+        assert.ok(!v.doi && !v.title && !v.link, JSON.stringify(v));
+        continue;
+      }
       assert.ok(v.doi || v.title, JSON.stringify(v));
       if (v.link) assert.ok(v.doi && v.label, JSON.stringify(v));
     }
@@ -158,6 +163,22 @@ test('duplicate record: the DOI-less 2021 JHR entry folds in with no link, the D
   assert.strictEqual(w.summary['publication-date'].year.value, '2023');
   same(el.getWorkDois(w).versions, []);
   assert.strictEqual(w.allSummaries.length, 3);
+});
+
+test('accepted-manuscript version (no DOI or title of its own): ignored, the card is unchanged', () => {
+  const { el } = setup();
+  const REPKIT = '10.1177/1536867X251398246';
+  const card = () => group(summary({ title: 'repkit: Tools for reproducible coding', doi: REPKIT, journal: 'The Stata Journal', year: '2025' }));
+  const other = group(summary({ title: 'Some other paper', doi: '10.1000/other.1' }));
+  const works = el.applyVersions([card(), other], [
+    { doi: REPKIT, title: 'repkit: Tools for reproducible coding', versions: [
+      { kind: 'accepted-manuscript', label: 'Accepted manuscript', link: false }] }]);
+  assert.strictEqual(works.length, 2);
+  const w = byDoi(el, works, REPKIT);
+  const { all, versions } = el.getWorkDois(w);
+  same(all.map(d => d.toLowerCase()), [REPKIT.toLowerCase()]);
+  same(versions, []);
+  assert.strictEqual(w.allSummaries.length, 1);
 });
 
 test('no published version yet: the working paper stays its own card', () => {
