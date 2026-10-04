@@ -41,6 +41,7 @@ class OrcidProfile extends HTMLElement {
   disconnectedCallback() {
     window.removeEventListener('hashchange', this.onHashChange);
     this.closeTalk({ updateHash: false });
+    this.teardownCitations();
   }
 
   async render(orcid) {
@@ -102,6 +103,7 @@ class OrcidProfile extends HTMLElement {
       this.setupActivityChart();
       this.setupFirstAuthorFilter();
       this.setupPermalinks();
+      this.setupCitations();
 
       // Resolve #doi-... / #work-... / #talk-... now that the cards exist
       this.handleHash();
@@ -125,11 +127,8 @@ class OrcidProfile extends HTMLElement {
       if (!work.putCode) continue;
 
       try {
-        const workRes = await fetch(`https://pub.orcid.org/v3.0/${orcid}/work/${work.putCode}`, {
-          headers: { 'Accept': 'application/json' }
-        });
-        if (workRes.ok) {
-          const workData = await workRes.json();
+        const workData = await this.fetchWorkDetail(work);
+        if (workData) {
           work.contributors = workData.contributors?.contributor || [];
 
           // Update the work card in place
@@ -160,6 +159,20 @@ class OrcidProfile extends HTMLElement {
 
     // After contributors are loaded, fetch abstracts in background
     this.lazyLoadAbstracts(works);
+  }
+
+  fetchWorkDetail(work) {
+    // Full ORCID work record (contributors, journal, citation). One request per work,
+    // shared by the contributor loader and the citation fallback. Resolves to null on failure.
+    if (!work.putCode) return Promise.resolve(null);
+    if (!work.detailPromise) {
+      work.detailPromise = fetch(`https://pub.orcid.org/v3.0/${this.orcid}/work/${work.putCode}`, {
+        headers: { 'Accept': 'application/json' }
+      })
+        .then(res => (res.ok ? res.json() : null))
+        .catch(() => null);
+    }
+    return work.detailPromise;
   }
 
   async lazyLoadAbstracts(works) {
@@ -754,7 +767,9 @@ class OrcidProfile extends HTMLElement {
       btn.addEventListener('click', () => this.openTalk(work, btn));
 
       const wpBadge = metaEl.querySelector('.working-paper-badge');
+      const citeBadge = metaEl.querySelector('.cite-badge');
       if (wpBadge) wpBadge.insertAdjacentElement('afterend', btn);
+      else if (citeBadge) citeBadge.insertAdjacentElement('beforebegin', btn);
       else metaEl.appendChild(btn);
     }
   }
@@ -777,6 +792,333 @@ class OrcidProfile extends HTMLElement {
   closeTalk({ updateHash = true } = {}) {
     if (!this.talkOpenId) return;
     TalkPopout.close({ updateHash });
+  }
+
+  // ---- Citation ----
+  //
+  // Every card gets a "Citation" button. The first click builds one normalized record
+  // (CSL-JSON from doi.org content negotiation, which covers Crossref and DataCite DOIs;
+  // else the ORCID work record) and formats it two ways: an economics-style reference
+  // and a BibTeX entry. Fields missing from the source are left out, never guessed.
+
+  citeButtonHTML(work) {
+    const panelId = `cite-${work.id}`;
+    return `
+      <button type="button" class="cite-badge" data-work-id="${work.id}" aria-expanded="false" aria-controls="${panelId}">
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M1.75 2.5h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5Zm4 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2.5 7.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 1.5 0Z"/></svg>
+        Citation
+      </button>`;
+  }
+
+  setupCitations() {
+    this.citeOpen = null; // { work, button, panel }
+    this.shadowRoot.querySelector('.works')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('.cite-badge');
+      if (!btn) return;
+      const work = this.workIndex.get(btn.dataset.workId);
+      if (!work) return;
+      if (this.citeOpen?.button === btn) this.closeCitation();
+      else this.openCitation(work, btn);
+    });
+    if (!this.onCiteDocClick) {
+      // Outside click: the event path crosses the shadow boundary, so check it whole
+      this.onCiteDocClick = (e) => {
+        if (!this.citeOpen) return;
+        const path = e.composedPath();
+        if (path.includes(this.citeOpen.panel) || path.includes(this.citeOpen.button)) return;
+        this.closeCitation({ restoreFocus: false });
+      };
+      this.onCiteKeydown = (e) => {
+        if (e.key === 'Escape' && this.citeOpen) this.closeCitation();
+      };
+      document.addEventListener('click', this.onCiteDocClick);
+      document.addEventListener('keydown', this.onCiteKeydown);
+    }
+  }
+
+  teardownCitations() {
+    if (!this.onCiteDocClick) return;
+    document.removeEventListener('click', this.onCiteDocClick);
+    document.removeEventListener('keydown', this.onCiteKeydown);
+    this.onCiteDocClick = this.onCiteKeydown = null;
+  }
+
+  openCitation(work, button) {
+    this.closeCitation({ restoreFocus: false }); // one open at a time
+    const card = button.closest('.work');
+    if (!card) return;
+
+    const panel = document.createElement('div');
+    panel.className = 'cite-popover';
+    panel.id = `cite-${work.id}`;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Cite this work');
+    panel.tabIndex = -1;
+    panel.innerHTML = `<p class="cite-loading">Loading citation&hellip;</p>`;
+    // Directly under the badge row, so it reads as attached to the button
+    const metaEl = card.querySelector('.work-meta');
+    if (metaEl) metaEl.insertAdjacentElement('afterend', panel);
+    else card.appendChild(panel);
+
+    button.setAttribute('aria-expanded', 'true');
+    button.classList.add('active');
+    this.citeOpen = { work, button, panel };
+    panel.focus({ preventScroll: true });
+
+    this.getCitation(work).then(cite => {
+      if (this.citeOpen?.panel !== panel) return; // closed or replaced meanwhile
+      this.renderCitation(panel, cite);
+    });
+  }
+
+  closeCitation({ restoreFocus = true } = {}) {
+    const open = this.citeOpen;
+    if (!open) return;
+    this.citeOpen = null;
+    open.panel.remove();
+    open.button.setAttribute('aria-expanded', 'false');
+    open.button.classList.remove('active');
+    if (restoreFocus) open.button.focus({ preventScroll: true });
+  }
+
+  renderCitation(panel, cite) {
+    if (!cite) {
+      panel.innerHTML = `<p class="cite-loading">No citation data is available for this work.</p>`;
+      return;
+    }
+    panel.innerHTML = `
+      <div class="cite-block">
+        <div class="cite-label">Citation</div>
+        <p class="cite-text">${cite.html}</p>
+        <button type="button" class="cite-copy" data-copy="text">Copy citation</button>
+      </div>
+      <div class="cite-block">
+        <div class="cite-label">BibTeX</div>
+        <pre class="cite-bibtex" tabindex="0">${this.escapeHtml(cite.bibtex)}</pre>
+        <button type="button" class="cite-copy" data-copy="bibtex">Copy BibTeX</button>
+      </div>
+      <span class="cite-status" aria-live="polite"></span>
+    `;
+    const status = panel.querySelector('.cite-status');
+    panel.querySelectorAll('.cite-copy').forEach(btn => {
+      const label = btn.textContent;
+      btn.addEventListener('click', async () => {
+        const ok = await this.copyText(btn.dataset.copy === 'bibtex' ? cite.bibtex : cite.text);
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.classList.toggle('copied', ok);
+        status.textContent = ok ? `${btn.dataset.copy === 'bibtex' ? 'BibTeX' : 'Citation'} copied to clipboard` : 'Could not copy';
+        clearTimeout(btn._timer);
+        btn._timer = setTimeout(() => {
+          btn.textContent = label;
+          btn.classList.remove('copied');
+          status.textContent = '';
+        }, 1800);
+      });
+    });
+  }
+
+  getCitation(work) {
+    // Cached per work: the network is hit on the first click only
+    if (!work.citationPromise) {
+      const promise = (async () => {
+        const doi = this.getWorkDOI(work);
+        let record = doi ? await this.fetchCslRecord(doi) : null;
+        if (!record) {
+          // A failed DOI lookup may be transient: show the ORCID fallback now, retry on the next click
+          if (doi) queueMicrotask(() => { if (work.citationPromise === promise) work.citationPromise = null; });
+          record = this.recordFromOrcid(work, await this.fetchWorkDetail(work));
+        }
+        if (!record || !record.title) return null;
+        return this.formatCitation(record);
+      })().catch(err => {
+        console.warn('Citation build failed:', err);
+        return null;
+      });
+      work.citationPromise = promise;
+    }
+    return work.citationPromise;
+  }
+
+  async fetchCslRecord(doi) {
+    // doi.org content negotiation: CSL-JSON for Crossref and DataCite DOIs alike
+    try {
+      const res = await fetch(`https://doi.org/${encodeURI(doi)}`, {
+        headers: { 'Accept': 'application/vnd.citationstyles.csl+json' }
+      });
+      if (!res.ok) return null;
+      const type = res.headers.get('content-type') || '';
+      if (!/json/i.test(type)) return null; // registrar without content negotiation: HTML landing page
+      return this.recordFromCsl(await res.json(), doi);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  recordFromCsl(csl, doi) {
+    if (!csl || typeof csl !== 'object') return null;
+    const first = v => (Array.isArray(v) ? v[0] : v) || '';
+    const clean = s => String(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    const dateParts = d => d?.['date-parts']?.[0]?.[0];
+    const year = dateParts(csl.issued) || dateParts(csl['published-print']) ||
+                 dateParts(csl['published-online']) || dateParts(csl.created);
+    const authors = (csl.author || [])
+      .map(a => (a.family || a.given)
+        ? { given: clean(a.given), family: clean(a.family) }
+        : (a.literal || a.name) ? { literal: clean(a.literal || a.name) } : null)
+      .filter(Boolean);
+    return {
+      type: csl.type || '',
+      authors,
+      year: year ? String(year) : '',
+      title: clean(first(csl.title)),
+      container: clean(first(csl['container-title'])),
+      publisher: clean(csl.publisher),
+      volume: clean(csl.volume),
+      issue: clean(csl.issue),
+      pages: clean(csl.page || csl['article-number']),
+      doi: csl.DOI || doi,
+    };
+  }
+
+  recordFromOrcid(work, detail) {
+    // Fallback: the ORCID record's own fields. The detailed record when it loaded, else the summary.
+    const src = detail || work.summary;
+    if (!src) return null;
+    const bib = this.parseBibtexFields(detail?.citation?.['citation-type'] === 'bibtex'
+      ? detail.citation['citation-value'] : '');
+    const contributors = detail?.contributors?.contributor || work.contributors || [];
+    const authors = contributors
+      .filter(c => {
+        const role = c['contributor-attributes']?.['contributor-role'];
+        return role === 'author' || role === undefined || role === null;
+      })
+      .map(c => {
+        const raw = c['credit-name']?.value || '';
+        const p = this.parsePersonName(raw);
+        if (!p) return null;
+        // Only "Last, First" splits reliably; otherwise keep the name exactly as written
+        return p.inverted && p.given ? { given: p.given, family: p.family } : { literal: raw.replace(/\s+/g, ' ').trim() };
+      })
+      .filter(Boolean);
+    const workType = (src.type || '').toLowerCase();
+    const { title, preprint } = this.workDisplayTitle({ summary: src });
+    return {
+      type: preprint ? 'preprint' : workType,
+      authors,
+      year: src['publication-date']?.year?.value || bib.year || '',
+      title: title === 'Untitled' ? '' : title,
+      container: src['journal-title']?.value || bib.journal || '',
+      publisher: bib.publisher || '',
+      volume: bib.volume || '',
+      issue: bib.number || '',
+      pages: bib.pages ? bib.pages.replace(/-+/g, '-') : '',
+      doi: this.getWorkDOI(work) || '',
+    };
+  }
+
+  parseBibtexFields(entry) {
+    // Read simple `name = {value}` / `name = "value"` / `name = 123` fields from one BibTeX entry
+    const fields = {};
+    if (!entry) return fields;
+    const re = /(\w+)\s*=\s*(?:\{((?:[^{}]|\{[^{}]*\})*)\}|"([^"]*)"|(\d+))/g;
+    let m;
+    while ((m = re.exec(entry))) {
+      fields[m[1].toLowerCase()] = (m[2] ?? m[3] ?? m[4] ?? '').replace(/[{}]/g, '').trim();
+    }
+    return fields;
+  }
+
+  formatCitation(r) {
+    // Economics style (AEA-like):
+    //   Family, Given, Given Family, and Given Family (Year). "Title." Journal Volume(Issue): pages. https://doi.org/...
+    const esc = s => this.escapeHtml(s);
+    const nameFirst = a => a.literal || (a.given ? `${a.family}, ${a.given}` : a.family);
+    const nameNatural = a => a.literal || [a.given, a.family].filter(Boolean).join(' ');
+    const names = r.authors.map((a, i) => (i === 0 ? nameFirst(a) : nameNatural(a)));
+    let authorText = '';
+    if (names.length === 1) authorText = names[0];
+    else if (names.length > 1) authorText = `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+
+    const pages = this.pageRange(r.pages, '\u2013');
+    const isBook = /^(book|monograph|edited-book|edited_book)$/.test(r.type);
+    const venue = isBook ? '' : (r.container || '');
+    let locator = '';
+    if (r.volume) locator += r.volume;
+    if (r.issue) locator += `(${r.issue})`;
+    if (pages) locator += locator ? `: ${pages}` : pages;
+
+    const head = [authorText, r.year ? `(${r.year})` : ''].filter(Boolean).join(' ');
+    const titleText = /[.?!]$/.test(r.title) ? r.title : `${r.title}.`;
+    const doiUrl = r.doi ? `https://doi.org/${r.doi}` : '';
+    const publisherText = isBook && r.publisher ? `${r.publisher}.` : '';
+    const venueText = venue ? `${venue}${locator ? ` ${locator}` : ''}.` : (locator ? `${locator}.` : '');
+
+    // Book titles stand alone in italics; everything else is a quoted title inside a venue
+    const textParts = [head ? `${head}.` : '', isBook ? titleText : `\u201c${titleText}\u201d`, venueText, publisherText, doiUrl];
+    const htmlParts = [
+      head ? `${esc(head)}.` : '',
+      isBook ? `<em>${esc(titleText)}</em>` : `\u201c${esc(titleText)}\u201d`,
+      venue ? `<em>${esc(venue)}</em>${locator ? ` ${esc(locator)}` : ''}.` : (locator ? `${esc(locator)}.` : ''),
+      publisherText ? esc(publisherText) : '',
+      doiUrl ? `<a href="${esc(doiUrl)}" target="_blank" rel="noopener">${esc(doiUrl)}</a>` : '',
+    ];
+    return {
+      text: textParts.filter(Boolean).join(' '),
+      html: htmlParts.filter(Boolean).join(' '),
+      bibtex: this.formatBibtex(r),
+    };
+  }
+
+  formatBibtex(r) {
+    const entryType = (() => {
+      const t = r.type;
+      if (t === 'journal-article' || t === 'article-journal') return 'article';
+      if (/^(book|monograph|edited-book|edited_book)$/.test(t)) return 'book';
+      if (/chapter/.test(t)) return 'incollection';
+      if (/report|working-paper/.test(t)) return 'techreport';
+      return 'misc';
+    })();
+    const texEscape = s => String(s).replace(/([&%$#_])/g, '\\$1');
+    const bibName = a => a.literal || (a.given ? `${a.family}, ${a.given}` : a.family);
+    const containerField = { article: 'journal', incollection: 'booktitle', techreport: 'institution' }[entryType] || 'howpublished';
+    const fields = [
+      ['author', r.authors.map(bibName).join(' and ')],
+      ['title', r.title],
+      [containerField, entryType === 'book' ? '' : r.container],
+      ['publisher', entryType === 'article' ? '' : r.publisher],
+      ['year', r.year],
+      ['volume', r.volume],
+      ['number', r.issue],
+      ['pages', this.pageRange(r.pages, '--')],
+      ['doi', r.doi],
+    ].filter(([, v]) => v);
+    const width = Math.max(...fields.map(([k]) => k.length));
+    const body = fields
+      .map(([k, v]) => `  ${k.padEnd(width)} = {${k === 'doi' ? v : texEscape(v)}}`)
+      .join(',\n');
+    return `@${entryType}{${this.bibtexKey(r)},\n${body}\n}`;
+  }
+
+  pageRange(pages, dash) {
+    // "e795-e796" -> "e795<dash>e796"; a degenerate "e92826-e92826" collapses to one page
+    const parts = String(pages || '').split(/\s*-+\s*/).filter(Boolean);
+    if (parts.length === 2 && parts[0] === parts[1]) return parts[0];
+    return parts.join(dash);
+  }
+
+  bibtexKey(r) {
+    // Key convention of Ben's bib files: first author's surname + year + first significant title word,
+    // all lowercase ASCII (croke2026sickness, andrabi2026emergence)
+    const ascii = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const a = r.authors[0];
+    const surname = a ? (a.family || (a.literal || '').split(/\s+/).pop()) : '';
+    const stop = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'for', 'and', 'to', 'with', 'from', 'at', 'by', 'do', 'is', 'are']);
+    const word = ascii(r.title).split(/[^a-z0-9]+/).find(w => w && !stop.has(w)) || '';
+    return `${ascii(surname).replace(/[^a-z]/g, '')}${r.year || ''}${word}` || 'citation';
+  }
+
+  escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   setupFirstAuthorFilter() {
@@ -894,6 +1236,7 @@ class OrcidProfile extends HTMLElement {
               ${workingPaperLabel}
             </a>
           ` : ''}
+          ${this.citeButtonHTML({ ...work, id: workId })}
         </div>
       </article>
     `;
@@ -926,38 +1269,36 @@ class OrcidProfile extends HTMLElement {
     return authors.join(', ');
   }
 
-  normalizeName(name) {
-    // Normalize to "F LastName" format (first initial + rest of name)
-    // Handle: "First Last", "First Middle Last", "Last, First", "Last, First Middle", "LastName AB"
-
+  parsePersonName(name) {
+    // Split an ORCID credit-name into { given, family }, keeping the record's spelling.
+    // Handles: "First Last", "First Middle Last", "Last, First", "Last, First Middle", "LastName AB"
     if (!name || !name.trim()) return null;
-
-    let cleaned = name.replace(/\s+/g, ' ').trim();
-    let firstName, restOfName;
+    const cleaned = name.replace(/\s+/g, ' ').trim();
 
     if (cleaned.includes(',')) {
-      // "Last, First" or "Last, First Middle" format
+      // "Last, First" or "Last, First Middle" format: the only unambiguous split
       const [last, first] = cleaned.split(',').map(p => p.trim());
-      firstName = first || '';
-      restOfName = last || '';
-    } else {
-      const parts = cleaned.split(' ');
-      if (parts.length === 1) {
-        return this.capitalizeName(parts[0]);
-      }
-
-      // Check if last part is all caps initials (PubMed style: "Smith AB")
-      const lastPart = parts[parts.length - 1];
-      if (/^[A-Z]{1,3}$/.test(lastPart)) {
-        // PubMed style: "LastName AB" -> use first char of initials, rest is last name
-        firstName = lastPart;
-        restOfName = parts.slice(0, -1).join(' ');
-      } else {
-        // Standard "First Last" or "First Middle Last"
-        firstName = parts[0];
-        restOfName = parts.slice(1).join(' ');
-      }
+      return { given: first || '', family: last || '', inverted: true };
     }
+    const parts = cleaned.split(' ');
+    if (parts.length === 1) return { given: '', family: parts[0] };
+
+    // PubMed style: "LastName AB" (trailing all-caps initials)
+    const lastPart = parts[parts.length - 1];
+    if (/^[A-Z]{1,3}$/.test(lastPart)) {
+      return { given: lastPart, family: parts.slice(0, -1).join(' ') };
+    }
+    // Standard "First Last" or "First Middle Last"
+    return { given: parts[0], family: parts.slice(1).join(' ') };
+  }
+
+  normalizeName(name) {
+    // Normalize to "F LastName" format (first initial + rest of name)
+    const parsed = this.parsePersonName(name);
+    if (!parsed) return null;
+    if (!parsed.given) return this.capitalizeName(parsed.family);
+    const firstName = parsed.given;
+    const restOfName = parsed.family;
 
     // Get first initial
     const cleanFirst = firstName.replace(/[.,]/g, '').trim();
@@ -1517,6 +1858,109 @@ class OrcidProfile extends HTMLElement {
           border-color: #afb8c1;
         }
 
+        /* Citation */
+        .cite-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          font-family: inherit;
+          line-height: inherit;
+          padding: 3px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+        }
+        .cite-badge:hover {
+          background: #f6f8fa;
+          color: #24292f;
+          border-color: #afb8c1;
+        }
+        .cite-badge.active {
+          background: #ddf4ff;
+          border-color: #54aeff;
+          color: #0969da;
+        }
+
+        .cite-popover {
+          margin-top: 10px;
+          padding: 12px;
+          background: #ffffff;
+          border: 1px solid #d0d7de;
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(140, 149, 159, 0.2);
+          font-size: 13px;
+          line-height: 1.5;
+          color: #24292f;
+          max-width: 100%;
+        }
+        .cite-popover:focus { outline: none; }
+        .cite-popover:focus-visible { box-shadow: 0 0 0 3px rgba(84, 174, 255, 0.35); }
+
+        .cite-loading { margin: 0; color: #57606a; }
+
+        .cite-block + .cite-block {
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid #d0d7de;
+        }
+
+        .cite-label {
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #57606a;
+          margin-bottom: 4px;
+        }
+
+        .cite-text {
+          margin: 0 0 8px 0;
+          overflow-wrap: anywhere;
+        }
+
+        .cite-bibtex {
+          margin: 0 0 8px 0;
+          padding: 8px 10px;
+          background: #f6f8fa;
+          border-radius: 6px;
+          font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+          font-size: 12px;
+          line-height: 1.45;
+          white-space: pre;
+          overflow-x: auto;
+          color: #24292f;
+        }
+
+        .cite-copy {
+          background: none;
+          border: 1px solid #d0d7de;
+          color: #57606a;
+          font-size: 12px;
+          font-family: inherit;
+          padding: 2px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+        }
+        .cite-copy:hover { background: #f6f8fa; color: #24292f; border-color: #afb8c1; }
+        .cite-copy.copied { color: #1a7f37; border-color: #1a7f37; }
+
+        .cite-status {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+        }
+
+        @media (max-width: 600px) {
+          .cite-popover { padding: 10px; }
+          .cite-bibtex { font-size: 11px; }
+        }
+
         /* Permalinks */
         .work {
           scroll-margin-top: var(--orcid-scroll-offset, 24px);
@@ -1703,6 +2147,16 @@ class OrcidProfile extends HTMLElement {
           .working-paper-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
           .talk-badge { border-color: #2f3d4f; color: #a3b1c2; }
           .talk-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .cite-badge { border-color: #2f3d4f; color: #a3b1c2; }
+          .cite-badge:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .cite-badge.active { background: #1e3a50; border-color: #60a5fa; color: #60a5fa; }
+          .cite-popover { background: #1a2332; border-color: #2f3d4f; color: #e5e5e5; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+          .cite-loading, .cite-label { color: #a3b1c2; }
+          .cite-block + .cite-block { border-top-color: #2f3d4f; }
+          .cite-bibtex { background: #2a3545; color: #e5e5e5; }
+          .cite-copy { border-color: #2f3d4f; color: #a3b1c2; }
+          .cite-copy:hover { background: #2a3545; color: #e5e5e5; border-color: #8b949e; }
+          .cite-copy.copied { color: #3fb950; border-color: #3fb950; }
           .permalink { color: #8b949e; }
           .permalink:hover { color: #60a5fa; }
           .permalink-status { color: #3fb950; }

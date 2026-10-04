@@ -15,6 +15,7 @@ Display ORCID profiles and publications as beautiful, embeddable cards on any we
 - **Search** - Filter publications by title or journal
 - **Permalinks** - Every publication has a linkable anchor; the link icon copies it
 - **Talk to this paper** - Optional side panel that opens a per-paper chat you host
+- **Citation** - Every card has a Citation button with a formatted reference and a BibTeX entry, each one click to copy
 - **Keywords & links** - Display research keywords and external URLs
 - **Responsive** - Looks great on desktop and mobile
 - **Shadow DOM** - Styles won't conflict with your site
@@ -46,6 +47,10 @@ See it in action: [bbdaniels.github.io/orcid-display](https://www.benjaminbdanie
 ### Permalinks
 
 Each publication card gets an `id` built from its DOI (`doi-10-1016-j-jdeveco-2026-103795`), or `work-<put-code>` when there is no DOI. Linking to `your-page#doi-...` scrolls to the card and highlights it, clearing any active filter that would hide it. The small link icon next to the DOI copies the link.
+
+### Citation
+
+Each card has a "Citation" button. It opens a small panel in the card with an economics-style reference (Authors (Year). "Title." Journal Volume(Issue): pages. DOI) and a BibTeX entry, each with a Copy button. Metadata comes from `doi.org` content negotiation (CSL-JSON, covering Crossref and DataCite DOIs), fetched on the first click and cached. Works without a DOI, or whose lookup fails, fall back to the ORCID record's own fields; a failed lookup is retried on the next click. Missing fields are left out, never guessed. BibTeX keys are first author's surname, year, and first significant title word (`andrabi2026emergence`). Esc or a click outside closes the panel.
 
 ### Talk to this paper
 
