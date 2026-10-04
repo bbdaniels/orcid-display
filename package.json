@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "description": "Dev-only: the widget itself has no dependencies. Tests need jsdom.",
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}

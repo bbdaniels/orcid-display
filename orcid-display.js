@@ -253,38 +253,82 @@ class OrcidProfile extends HTMLElement {
       : { title: raw, preprint: false };
   }
 
+  async fetchZenodoRecords(orcid) {
+    // Every Zenodo record crediting this ORCID. Anonymous requests are capped at 25 per page,
+    // so follow links.next until all hits are in. Bounded; a failed page keeps what came before.
+    const MAX_PAGES = 20;
+    const records = [];
+    let url = `https://zenodo.org/api/records?q=creators.orcid:${orcid}&size=25&page=1`;
+    for (let page = 1; url && page <= MAX_PAGES; page++) {
+      let data;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+      } catch (err) {
+        console.warn(`Zenodo page ${page} failed:`, err);
+        break;
+      }
+      const hits = data.hits?.hits || [];
+      records.push(...hits);
+      const total = data.hits?.total;
+      if (!hits.length || (typeof total === 'number' && records.length >= total)) break;
+      const next = data.links?.next;
+      url = typeof next === 'string' && /^https:\/\/zenodo\.org\/api\/records\?/.test(next) ? next : null;
+    }
+    return records;
+  }
+
+  buildZenodoIndex(records) {
+    // Normalized paper DOI -> the newest Zenodo record that isSupplementTo it
+    const index = new Map();
+    for (const record of records) {
+      const candidate = {
+        id: record.id,
+        url: `https://zenodo.org/records/${record.id}`,
+        access: record.metadata?.access_right || 'open',
+        created: record.created || ''
+      };
+      for (const rel of record.metadata?.related_identifiers || []) {
+        if (rel.scheme !== 'doi' || rel.relation !== 'isSupplementTo') continue;
+        const key = this.normalizeDoi(rel.identifier);
+        if (!key) continue;
+        const current = index.get(key);
+        if (!current || this.isNewerZenodo(candidate, current)) index.set(key, candidate);
+      }
+    }
+    return index;
+  }
+
+  isNewerZenodo(a, b) {
+    if (a.created !== b.created) return a.created > b.created;
+    return Number(a.id) > Number(b.id);
+  }
+
+  zenodoForWork(work, index) {
+    // Match on every DOI the work carries (published and working-paper/preprint); newest record wins
+    let best = null;
+    for (const doi of this.getWorkDois(work).all) {
+      const hit = index.get(this.normalizeDoi(doi));
+      if (hit && (!best || this.isNewerZenodo(hit, best))) best = hit;
+    }
+    return best;
+  }
+
   async lazyLoadZenodo(orcid) {
     try {
-      const res = await fetch(`https://zenodo.org/api/records?q=creators.orcid:${orcid}&size=25`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const records = data.hits?.hits || [];
+      const index = this.buildZenodoIndex(await this.fetchZenodoRecords(orcid));
 
-      // Build map: paper DOI (lowercase) -> Zenodo record URL
-      const doiToZenodo = {};
-      for (const record of records) {
-        const ri = record.metadata?.related_identifiers || [];
-        const zenodoUrl = `https://zenodo.org/records/${record.id}`;
-        const access = record.metadata?.access_right || 'open';
-        for (const rel of ri) {
-          if (rel.scheme === 'doi' && rel.relation === 'isSupplementTo') {
-            doiToZenodo[rel.identifier.toLowerCase()] = { url: zenodoUrl, access };
-          }
-        }
-      }
-
-      // Inject badges into matching work cards
+      // Inject one badge per matching work card
       for (const work of this.works) {
-        const doi = this.getWorkDOI(work);
-        if (!doi) continue;
-        const zenodo = doiToZenodo[doi.toLowerCase()];
+        const zenodo = this.zenodoForWork(work, index);
         if (!zenodo) continue;
 
         const card = this.shadowRoot.querySelector(`[data-put-code="${work.putCode}"]`);
         if (!card) continue;
 
         let metaEl = card.querySelector('.work-meta');
-        if (!metaEl) continue;
+        if (!metaEl || metaEl.querySelector('.zenodo-badge')) continue;
 
         const badge = document.createElement('a');
         badge.href = zenodo.url;

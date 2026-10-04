@@ -1,2 +1,4 @@
 # Claude Code local config
 .claude/
+node_modules/
+package-lock.json
