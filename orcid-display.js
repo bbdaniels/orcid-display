@@ -8,6 +8,9 @@
  *   talk-label     Button text (default "Talk to this paper").
  *   talk-manifest  URL of a JSON list of DOIs that have a chat; when set, only
  *                  listed works get the button.
+ *   versions       URL of a JSON file linking each published paper to its working
+ *                  paper, preprint and duplicate ORCID records; each paper becomes
+ *                  one card (see applyVersions).
  *
  * The talk panel itself is TalkPopout (end of file), shared with any page via
  * OrcidDisplay.openTalk({ url, title }) or data-talk-url links.
@@ -51,6 +54,8 @@ class OrcidProfile extends HTMLElement {
     // Fetch the talk manifest in parallel with ORCID; buttons are applied once both are in
     this.talkManifestValue = undefined;
     this.talkManifest = this.loadTalkManifest().then(v => (this.talkManifestValue = v));
+    // Version links (published article + working paper/preprint), awaited before the first render
+    const versionsPromise = this.loadVersions();
 
     try {
       // Fetch ORCID profile data using public API
@@ -75,7 +80,7 @@ class OrcidProfile extends HTMLElement {
 
       // Build works list from summaries (no contributors yet - lazy load)
       const workGroups = worksData.group || [];
-      const works = workGroups.map(group => {
+      const groupWorks = workGroups.map(group => {
         const summaries = group['work-summary'] || [];
         const workSummary = summaries[0];
         return {
@@ -85,6 +90,9 @@ class OrcidProfile extends HTMLElement {
           putCode: workSummary?.['put-code']
         };
       }).filter(w => w.summary);
+
+      // One card per paper: fold working-paper, preprint and duplicate groups into their published version
+      const works = this.applyVersions(groupWorks, await versionsPromise);
 
       // Stable per-work ids for permalinks and the talk popout
       this.workIndex = new Map();
@@ -204,28 +212,146 @@ class OrcidProfile extends HTMLElement {
   }
 
   getWorkDois(work) {
-    // Collect DOIs across all summaries in the group (ORCID auto-groups by shared IDs).
-    // Working-paper DOIs (NBER, SSRN, arXiv, OSF, bioRxiv/medRxiv) get surfaced as an
-    // open-access alternative when the primary entry is a paywalled published version.
+    // Every DOI the card carries: all summaries in the ORCID group, plus any working-paper,
+    // preprint or duplicate groups folded in by the versions file (see applyVersions).
+    // Returns { all, published, versions }: versions are the other-version links to show.
     const allSummaries = work.allSummaries && work.allSummaries.length ? work.allSummaries : [work.summary];
     const seen = new Set();
     const all = [];
+    const add = val => {
+      if (!val) return;
+      const key = this.normalizeDoi(val);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      all.push(val);
+    };
     for (const s of allSummaries) {
-      const ids = s?.['external-ids']?.['external-id'] || [];
-      for (const id of ids) {
-        if (id['external-id-type'] !== 'doi') continue;
-        const val = id['external-id-value'];
-        if (!val) continue;
-        const key = this.normalizeDoi(val);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        all.push(val);
+      for (const id of s?.['external-ids']?.['external-id'] || []) {
+        if (id['external-id-type'] === 'doi') add(id['external-id-value']);
       }
     }
-    const wpPrefixRe = /^10\.(3386|2139|48550|31219|1101)\//i;
-    const published = all.find(d => !wpPrefixRe.test(d)) || all[0] || null;
-    const workingPaper = all.find(d => wpPrefixRe.test(d) && d.toLowerCase() !== (published || '').toLowerCase()) || null;
-    return { all, published, workingPaper };
+    for (const d of work.extraDois || []) add(d);
+
+    if (work.mainDoi) {
+      // The versions file named the published DOI and the versions to link
+      const main = this.normalizeDoi(work.mainDoi);
+      const published = all.find(d => this.normalizeDoi(d) === main) || work.mainDoi;
+      return { all, published, versions: work.versionLinks || [] };
+    }
+
+    // No versions-file entry: ORCID itself grouped these DOIs. A DOI is the other version when
+    // its ORCID record is typed preprint/working-paper or it sits on a preprint or WP server.
+    const otherTyped = new Set();
+    for (const s of allSummaries) {
+      if (!/^(preprint|working-paper)$/i.test(s?.type || '')) continue;
+      for (const id of s?.['external-ids']?.['external-id'] || []) {
+        if (id['external-id-type'] === 'doi' && id['external-id-relationship'] !== 'version-of') {
+          otherTyped.add(this.normalizeDoi(id['external-id-value']));
+        }
+      }
+    }
+    const isOther = d => otherTyped.has(this.normalizeDoi(d)) || !!this.versionServer(d);
+    const published = all.find(d => !isOther(d)) || all[0] || null;
+    const versions = all
+      .filter(d => d !== published && isOther(d))
+      .map(d => {
+        const server = this.versionServer(d) || { kind: 'preprint', label: 'Preprint' };
+        return { kind: server.kind, label: server.label, doi: d };
+      });
+    return { all, published, versions };
+  }
+
+  versionServer(doi) {
+    // Preprint and working-paper DOI registrants: { kind, label } or null
+    const d = this.normalizeDoi(doi);
+    const servers = [
+      ['10.3386/', 'working-paper', 'NBER Working Paper'],
+      ['10.2139/', 'working-paper', 'SSRN'],
+      ['10.1596/1813-9450', 'working-paper', 'World Bank Policy Research Working Paper'],
+      ['10.48550/', 'preprint', 'arXiv'],
+      ['10.31219/', 'preprint', 'OSF Preprints'],
+      ['10.1101/', 'preprint', 'bioRxiv/medRxiv'],
+      ['10.64898/', 'preprint', 'medRxiv'],
+      ['10.2196/preprints.', 'preprint', 'JMIR Preprints'],
+    ];
+    const hit = servers.find(([prefix]) => d.startsWith(prefix));
+    return hit ? { kind: hit[1], label: hit[2] } : null;
+  }
+
+  async loadVersions() {
+    // The `versions` attribute: URL of a JSON file linking each published paper to its working
+    // paper, preprint and duplicate records. Resolves to its papers array, or null.
+    const url = this.getAttribute('versions');
+    if (!url) return null;
+    try {
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Array.isArray(data) ? data : (Array.isArray(data?.papers) ? data.papers : null);
+    } catch (e) {
+      console.warn('Versions file fetch failed:', e);
+      return null;
+    }
+  }
+
+  normalizeTitle(title) {
+    // Same rule as fetch-publications.py: lowercase, drop everything outside a-z0-9
+    return String(title || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  applyVersions(works, papers) {
+    // Fold each paper's other versions into one card. A paper is the work carrying its DOI
+    // (else its title); a version is a different work carrying its DOI (else its title).
+    // The paper's card keeps the published record and gains every version's DOI.
+    if (!Array.isArray(papers) || !papers.length) return works;
+    const summariesOf = w => (w.allSummaries && w.allSummaries.length ? w.allSummaries : [w.summary]);
+    const doiOf = s => (s?.['external-ids']?.['external-id'] || [])
+      .filter(id => id['external-id-type'] === 'doi' && id['external-id-value'])
+      .map(id => this.normalizeDoi(id['external-id-value']));
+    const removed = new Set();
+    const find = (ref, exclude) => {
+      const live = works.filter(w => w !== exclude && !removed.has(w));
+      const doi = ref?.doi ? this.normalizeDoi(ref.doi) : '';
+      if (doi) {
+        const hit = live.find(w => summariesOf(w).some(s => doiOf(s).includes(doi)));
+        if (hit) return hit;
+      }
+      const title = this.normalizeTitle(ref?.title);
+      if (!title) return null;
+      return live.find(w => summariesOf(w).some(s => this.normalizeTitle(s?.title?.title?.value) === title)) || null;
+    };
+
+    for (const paper of papers) {
+      const main = find(paper, null);
+      if (!main) continue; // no published version on ORCID yet: its working paper stays the card
+      const mainDoi = paper.doi ? this.normalizeDoi(paper.doi) : '';
+      const ownSummaries = summariesOf(main);
+      const published = mainDoi && ownSummaries.find(s => doiOf(s).includes(mainDoi));
+      if (published) {
+        main.summary = published;
+        main.putCode = published['put-code'];
+      }
+      main.mainDoi = paper.doi || null;
+      main.extraDois = main.extraDois || [];
+      main.versionLinks = main.versionLinks || [];
+      for (const version of paper.versions || []) {
+        const twin = find(version, main);
+        if (twin) {
+          main.allSummaries = [...summariesOf(main), ...summariesOf(twin)];
+          removed.add(twin);
+        }
+        if (version.doi) main.extraDois.push(version.doi);
+        if (version.link && version.doi) {
+          main.versionLinks.push({
+            kind: version.kind || 'working-paper',
+            label: version.label || '',
+            number: version.number || '',
+            doi: version.doi,
+          });
+        }
+      }
+    }
+    return works.filter(w => !removed.has(w));
   }
 
   normalizeDoi(doi) {
@@ -810,7 +936,7 @@ class OrcidProfile extends HTMLElement {
       btn.appendChild(document.createTextNode(` ${label}`));
       btn.addEventListener('click', () => this.openTalk(work, btn));
 
-      const wpBadge = metaEl.querySelector('.working-paper-badge');
+      const wpBadge = [...metaEl.querySelectorAll('.working-paper-badge')].pop();
       const citeBadge = metaEl.querySelector('.cite-badge');
       if (wpBadge) wpBadge.insertAdjacentElement('afterend', btn);
       else if (citeBadge) citeBadge.insertAdjacentElement('beforebegin', btn);
@@ -1247,11 +1373,9 @@ class OrcidProfile extends HTMLElement {
     if (!journalTitle && (preprint || workType === 'preprint')) {
       journalTitle = 'Preprint';
     }
-    const { published: publishedDoi, workingPaper: workingPaperDoi } = this.getWorkDois(work);
+    const { published: publishedDoi, versions } = this.getWorkDois(work);
     const workId = work.id || this.slugForWork(work);
     const doiUrl = publishedDoi ? `https://doi.org/${publishedDoi}` : null;
-    const workingPaperUrl = workingPaperDoi ? `https://doi.org/${workingPaperDoi}` : null;
-    const workingPaperLabel = this.workingPaperLabel(workingPaperDoi);
 
     const pubDate = pubMonth ? `${this.getMonthName(pubMonth)} ${pubYear}` : pubYear;
 
@@ -1274,12 +1398,7 @@ class OrcidProfile extends HTMLElement {
         <p class="work-authors">${authorList}</p>
         ${subtitle ? `<p class="work-subtitle">${subtitle}</p>` : ''}
         <div class="work-meta">
-          ${workingPaperUrl ? `
-            <a href="${workingPaperUrl}" target="_blank" rel="noopener" class="working-paper-badge" title="Open-access working paper version">
-              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 1.75C2 .784 2.784 0 3.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237V14.25A1.75 1.75 0 0 1 12.25 16h-8.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 8 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
-              ${workingPaperLabel}
-            </a>
-          ` : ''}
+          ${versions.map(v => this.versionBadgeHTML(v)).join('')}
           ${this.citeButtonHTML({ ...work, id: workId })}
         </div>
       </article>
@@ -1413,15 +1532,17 @@ class OrcidProfile extends HTMLElement {
     return months[idx] || '';
   }
 
-  workingPaperLabel(doi) {
-    if (!doi) return 'Working paper';
-    const d = doi.toLowerCase();
-    if (d.startsWith('10.3386/')) return 'NBER WP';
-    if (d.startsWith('10.2139/')) return 'SSRN';
-    if (d.startsWith('10.48550/')) return 'arXiv';
-    if (d.startsWith('10.31219/')) return 'OSF';
-    if (d.startsWith('10.1101/')) return 'bioRxiv';
-    return 'Working paper';
+  versionBadgeHTML(version) {
+    // Small link to another version of the paper: "Working paper" or "Preprint"
+    const text = version.kind === 'preprint' ? 'Preprint' : 'Working paper';
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const detail = [version.label, version.number].filter(Boolean).join(' ');
+    const tip = detail ? `${detail} (doi:${version.doi})` : `doi:${version.doi}`;
+    return `
+            <a href="https://doi.org/${esc(version.doi)}" target="_blank" rel="noopener" class="working-paper-badge" data-version-kind="${esc(version.kind)}" title="${esc(tip)}">
+              <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M2 1.75C2 .784 2.784 0 3.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237V14.25A1.75 1.75 0 0 1 12.25 16h-8.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 8 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>
+              ${text}
+            </a>`;
   }
 
   setupSearch() {

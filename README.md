@@ -43,6 +43,26 @@ See it in action: [bbdaniels.github.io/orcid-display](https://www.benjaminbdanie
 | `talk-url` | no | URL template for a per-paper chat. Turns on the "Talk to this paper" button. Placeholders: `{doi}` (URL-encoded DOI), `{slug}` (the DOI in slug form, as in the permalink), `{putcode}` (ORCID put-code) |
 | `talk-label` | no | Button text. Default: `Talk to this paper` |
 | `talk-manifest` | no | URL of a JSON file listing the DOIs that have a chat. Only listed works get a button. Without it, every work with a DOI gets one |
+| `versions` | no | URL of a JSON file linking each published paper to its working paper, preprint and duplicate ORCID records, so each paper is one card. See [Versions](#versions) |
+
+### Versions
+
+ORCID often holds a paper's published article and its working paper or preprint as separate works, and sometimes a stale duplicate record as well. Without help, each becomes its own card. Point the component at a versions file to merge them:
+
+```json
+{ "papers": [
+  { "doi": "10.1016/j.jdeveco.2026.103795",
+    "versions": [
+      { "kind": "working-paper", "label": "NBER Working Paper", "number": "35060", "doi": "10.3386/w35060", "link": true },
+      { "kind": "working-paper", "label": "SSRN", "doi": "10.2139/ssrn.6566855", "link": false } ] },
+  { "doi": "10.3368/jhr.59.2.0520-10887R1",
+    "versions": [ { "kind": "duplicate", "title": "Human Capital Accumulation and Disasters: Evidence from the Pakistan Earthquake of 2005" } ] }
+] }
+```
+
+A paper is the ORCID work carrying its `doi` (else its `title`); a version is any other work carrying the version's `doi` (else its `title`). Titles compare lowercased with everything outside a-z0-9 removed. The published record stays the card (title, venue, year, DOI); every version with `link: true` adds a small "Working paper" or "Preprint" link (`kind`); every version's DOI joins the card's DOIs, so Citation, Talk to this paper and Replication match on any of them. A version listed with no published work on ORCID stays its own card. A version need not be on ORCID at all: a `link: true` entry still shows its link.
+
+Without a versions file (or for papers it does not list), versions that ORCID itself grouped into one work are still told apart: a DOI whose ORCID record is typed preprint or working paper, or that sits on a preprint or working-paper registrant (SSRN, NBER, World Bank PRWP, arXiv, OSF, bioRxiv/medRxiv, JMIR Preprints), becomes the link and the other DOI the card.
 
 ### Permalinks
 
